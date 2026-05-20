@@ -1,0 +1,9 @@
+Unique_ID,Name,IP,ModBusPort,Slave_ID,Device
+1,Over Head Tank,10.92.165.22,26,5,Supmea
+2,WWTP RO IN,10.92.165.22,26,3,Supmea
+3,WWTP RO Rejection,10.92.165.22,26,4,Supmea
+4,WWTP IN,10.92.165.22,26,2,Supmea
+5,Well Water,10.92.165.22,26,8,Supmea
+6,Fresh Water Tank,10.92.165.22,26,21,Supmea
+7,Domestic Fresh,10.92.165.22,26,6,Kaflon
+8,Drinking Water RO Plant,10.92.165.22,26,7,GI Instruments
