@@ -1,0 +1,468 @@
+import calendar
+from datetime import date
+
+import pandas as pd
+from fastapi import APIRouter, HTTPException
+
+from database.connection import get_db_connection
+from services.sql_service import load_sql_data
+from services.calculation_service import (
+    calculate_withdrawal,
+    calculate_discharge,
+    calculate_recycle_volume,
+    calculate_recycling_percent,
+    fetch_meter_total,
+    METERS,
+)
+
+router = APIRouter(prefix="/api")
+
+
+def _label_d_mmm_yy(ts: pd.Timestamp) -> str:
+    """e.g. 1-Apr-26 (no leading zero on day; Windows-safe)."""
+    t = pd.Timestamp(ts).normalize()
+    return f"{int(t.day)}-{t.strftime('%b-%y')}"
+
+def _label_mmm_yy(ts: pd.Timestamp) -> str:
+    """e.g. Apr-26."""
+    t = pd.Timestamp(ts).normalize()
+    return t.strftime("%b-%y")
+
+def _resolve_selected_year(
+    df: pd.DataFrame,
+    year: int | None,
+    *,
+    min_year: int = 2019,
+) -> int:
+    latest = pd.Timestamp(df["DATE"].max()).normalize()
+    y = int(year) if year is not None else int(latest.year)
+    if y < min_year:
+        raise HTTPException(status_code=400, detail=f"year must be >= {min_year}")
+    return y
+
+
+def _resolve_selected_month_year(
+    df: pd.DataFrame,
+    year: int | None,
+    month: int | None,
+    *,
+    min_year: int = 2019,
+) -> tuple[int, int]:
+    latest = pd.Timestamp(df["DATE"].max()).normalize()
+    y = int(year) if year is not None else int(latest.year)
+    m = int(month) if month is not None else int(latest.month)
+    if y < min_year:
+        raise HTTPException(status_code=400, detail=f"year must be >= {min_year}")
+    if not 1 <= m <= 12:
+        raise HTTPException(status_code=400, detail="month must be between 1 and 12")
+    return y, m
+
+
+def _resolve_selected_week_window(
+    df: pd.DataFrame,
+    *,
+    year: int | None,
+    month: int | None,
+    week: int | None,
+    min_year: int = 2019,
+) -> tuple[pd.Timestamp, pd.Timestamp]:
+    latest = pd.Timestamp(df["DATE"].max()).normalize()
+    y, m = _resolve_selected_month_year(df, year=year, month=month, min_year=min_year)
+    _, last_day = calendar.monthrange(y, m)
+
+    if week is None:
+        if y == int(latest.year) and m == int(latest.month):
+            w = ((int(latest.day) - 1) // 7) + 1
+        else:
+            w = 1
+    else:
+        w = int(week)
+
+    max_week = ((last_day - 1) // 7) + 1
+    if w < 1 or w > max_week:
+        raise HTTPException(
+            status_code=400,
+            detail=f"week must be between 1 and {max_week} for {y}-{m:02d}",
+        )
+
+    start_day = 1 + (w - 1) * 7
+    end_day = min(start_day + 6, last_day)
+    start_ts = pd.Timestamp(date(y, m, start_day)).normalize()
+    end_ts = pd.Timestamp(date(y, m, end_day)).normalize()
+    return start_ts, end_ts
+
+
+@router.get("/dashboard")
+def dashboard(
+    chart_range: str = "weekly",
+    metric: str = "all",
+    year: int | None = None,
+    month: int | None = None,
+    week: int | None = None,
+    day: int | None = None,
+):
+    try:
+        df = load_sql_data()
+        if df.empty:
+            return {
+                "status": "success",
+                "date_from": None,
+                "date_to": None,
+                "labels": [],
+                "datasets": {},
+            }
+
+        filtered = df
+
+        meta: dict[str, object] = {}
+        labels: list[str] = []
+        wd_series: list[float] = []
+        fwt_series: list[float] = []
+        dc_series: list[float] = []
+
+        if chart_range == "weekly":
+            # Selected week-of-month (1..5), based on selected month/year.
+            start_ts, end_ts = _resolve_selected_week_window(
+                df, year=year, month=month, week=week
+            )
+            for ts in pd.date_range(start=start_ts, end=end_ts, freq="D"):
+                day = pd.Timestamp(ts).normalize()
+                day_data = filtered[filtered["DATE"].dt.normalize() == day]
+                labels.append(_label_d_mmm_yy(day))
+                wd_series.append(calculate_withdrawal(day_data))
+                fwt_series.append(
+                    fetch_meter_total(day_data, METERS["fresh_water_tank"])
+                )
+                dc_series.append(calculate_discharge(day_data))
+
+            date_from = start_ts.date().isoformat()
+            date_to = end_ts.date().isoformat()
+
+        elif chart_range == "monthly":
+            # Full selected month/year (or latest if not provided), one point per day.
+            y, m = _resolve_selected_month_year(df, year=year, month=month)
+            _, last_d = calendar.monthrange(y, m)
+            for d in pd.date_range(
+                start=date(y, m, 1), end=date(y, m, last_d), freq="D"
+            ):
+                ts = pd.Timestamp(d).normalize()
+                day_data = filtered[filtered["DATE"].dt.normalize() == ts]
+                labels.append(_label_d_mmm_yy(ts))
+                wd_series.append(calculate_withdrawal(day_data))
+                fwt_series.append(
+                    fetch_meter_total(day_data, METERS["fresh_water_tank"])
+                )
+                dc_series.append(calculate_discharge(day_data))
+
+            date_from = date(y, m, 1).isoformat()
+            date_to = date(y, m, last_d).isoformat()
+
+        elif chart_range == "yearly":
+            # Selected year (or latest if not provided), one point per month.
+            y = _resolve_selected_year(df, year=year)
+            for m in range(1, 13):
+                month_data = filtered[
+                    (filtered["DATE"].dt.year == y) & (filtered["DATE"].dt.month == m)
+                ]
+                labels.append(_label_mmm_yy(pd.Timestamp(date(y, m, 1))))
+                wd_series.append(calculate_withdrawal(month_data))
+                fwt_series.append(
+                    fetch_meter_total(month_data, METERS["fresh_water_tank"])
+                )
+                dc_series.append(calculate_discharge(month_data))
+
+            date_from = date(y, 1, 1).isoformat()
+            date_to = date(y, 12, 31).isoformat()
+
+        elif chart_range == "daily":
+            # Each calendar day in the selected month (Feb 28/29, etc.); use ``year`` / ``month``
+            # like ``monthly`` so the charts can drive day-granularity selectors.
+            y, m = _resolve_selected_month_year(df, year=year, month=month)
+            _, last_d = calendar.monthrange(y, m)
+            for d in pd.date_range(
+                start=date(y, m, 1), end=date(y, m, last_d), freq="D"
+            ):
+                ts = pd.Timestamp(d).normalize()
+                day_data = filtered[filtered["DATE"].dt.normalize() == ts]
+                labels.append(_label_d_mmm_yy(ts))
+                wd_series.append(calculate_withdrawal(day_data))
+                fwt_series.append(
+                    fetch_meter_total(day_data, METERS["fresh_water_tank"])
+                )
+                dc_series.append(calculate_discharge(day_data))
+
+            date_from = date(y, m, 1).isoformat()
+            date_to = date(y, m, last_d).isoformat()
+
+        else:
+            raise HTTPException(status_code=400, detail="Invalid chart range")
+
+        if metric == "all":
+            datasets = {
+                "water_withdrawal": wd_series,
+                "fresh_water_tank": fwt_series,
+                "factory_discharge": dc_series,
+            }
+        elif metric == "water_withdrawal":
+            datasets = {"water_withdrawal": wd_series}
+        elif metric == "fresh_water_tank":
+            datasets = {"fresh_water_tank": fwt_series}
+        elif metric == "factory_discharge":
+            datasets = {"factory_discharge": dc_series}
+        else:
+            raise HTTPException(status_code=400, detail="Invalid metric")
+
+        return {
+            "status": "success",
+            "date_from": date_from,
+            "date_to": date_to,
+            "labels": labels,
+            "datasets": datasets,
+            **meta,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/date-options")
+def date_options(year: int | None = None, month: int | None = None):
+    """Frontend helper: return available dates/months/years from the Excel.
+
+    If ``year`` and ``month`` are set, also returns ``days`` (1 … last calendar day)
+    for building a day selector with daily charts (e.g. 28/29 in February).
+    """
+    try:
+        df = load_sql_data()
+        if df.empty:
+            out: dict[str, object] = {
+                "status": "success",
+                "date_min": None,
+                "date_max": None,
+                "years": [],
+                "months": [],
+            }
+            if year is not None and month is not None:
+                out["days"] = []
+                out["days_in_month"] = None
+            return out
+
+        dmin = pd.Timestamp(df["DATE"].min()).normalize()
+        dmax = pd.Timestamp(df["DATE"].max()).normalize()
+
+        years = sorted(df["DATE"].dt.year.dropna().astype(int).unique().tolist())
+        if years:
+            start_year = 2019
+            end_year = max(years[-1], start_year)
+            years = list(range(start_year, end_year + 1))
+        month_periods = (
+            df["DATE"].dt.to_period("M").dropna().astype(str).unique().tolist()
+        )
+        months = sorted(month_periods)  # "YYYY-MM"
+
+        result: dict[str, object] = {
+            "status": "success",
+            "date_min": dmin.date().isoformat(),
+            "date_max": dmax.date().isoformat(),
+            "years": years,
+            "months": months,
+        }
+
+        if year is not None and month is not None:
+            if not 1 <= int(month) <= 12:
+                raise HTTPException(status_code=400, detail="month must be between 1 and 12")
+            _, last_d = calendar.monthrange(int(year), int(month))
+            result["days_in_month"] = last_d
+            result["days"] = list(range(1, last_d + 1))
+
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/meter-status")
+def get_meter_status():
+    try:
+        conn   = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("EXEC sp_GetMeterStatus")
+        columns = [col[0] for col in cursor.description]
+        results = []
+        for row in cursor.fetchall():
+            res = dict(zip(columns, row))
+            if res.get("timestamp"):
+                res["timestamp"] = res["timestamp"].isoformat()
+            results.append(res)
+        conn.close()
+        return {"status": "success", "count": len(results), "data": results}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch meter status: {str(e)}")
+
+@router.get("/review")
+def review_page(year: int | None = None):
+    try:
+        df = load_sql_data()
+        if df.empty:
+            return {"status": "success", "year": year, "data": {}}
+
+        y = _resolve_selected_year(df, year=year)
+        year_data = df[df["DATE"].dt.year == y]
+
+        if year_data.empty:
+            return {"status": "success", "year": y, "data": {}}
+
+        # ── Monthly breakdown ─────────────────────────────────────────────────
+        months_data = []
+        for m in range(1, 13):
+            month_data = year_data[year_data["DATE"].dt.month == m]
+            if month_data.empty:
+                continue
+
+            month_name         = pd.Timestamp(date(y, m, 1)).strftime("%B")
+            withdrawal         = calculate_withdrawal(month_data)
+            discharge          = calculate_discharge(month_data)
+            fresh_water        = fetch_meter_total(month_data, METERS["fresh_water_tank"])
+            recycle_volume     = calculate_recycle_volume(month_data)
+            recycle_efficiency = calculate_recycling_percent(month_data)
+
+            months_data.append({
+                "month":                m,
+                "month_name":           month_name,
+                "water_withdrawal":     withdrawal,
+                "fresh_water_tank":     fresh_water,
+                "discharge":            discharge,
+                "recycle_volume":       recycle_volume,
+                # "recycling_volume":     recycle_volume,
+                # "recyling_volume":      recycle_volume,
+                "recycle_efficiency":   recycle_efficiency,
+                # "recycling_efficiency": recycle_efficiency,
+                # "recycling_efficency":  recycle_efficiency,
+            })
+
+        # ── Year summary ──────────────────────────────────────────────────────
+        total_withdrawal     = calculate_withdrawal(year_data)
+        total_discharge      = calculate_discharge(year_data)
+        total_recycle_volume = calculate_recycle_volume(year_data)
+        total_fresh_water    = fetch_meter_total(year_data, METERS["fresh_water_tank"])
+        overall_efficiency   = calculate_recycling_percent(year_data)
+
+        # ── Monthly metrics for insights ──────────────────────────────────────
+        monthly_metrics = []
+        for m in range(1, 13):
+            month_data = year_data[year_data["DATE"].dt.month == m]
+            if month_data.empty:
+                continue
+
+            month_name         = pd.Timestamp(date(y, m, 1)).strftime("%B")
+            withdrawal         = calculate_withdrawal(month_data)
+            discharge          = calculate_discharge(month_data)
+            fresh_water        = fetch_meter_total(month_data, METERS["fresh_water_tank"])
+            recycle_efficiency = calculate_recycling_percent(month_data)
+
+            monthly_metrics.append({
+                "month":             m,
+                "month_name":        month_name,
+                "withdrawal":        withdrawal,
+                "discharge":         discharge,
+                "fresh_water_tank":  fresh_water,
+                "recycle_efficiency": recycle_efficiency,
+            })
+
+        # ── Key insights ──────────────────────────────────────────────────────
+        # Helper: only consider months where the metric has real data (> 0)
+        def safe_max(key):
+            valid = [m for m in monthly_metrics if (m.get(key) or 0) > 0]
+            return max(valid, key=lambda x: x[key]) if valid else None
+
+        def safe_min(key):
+            valid = [m for m in monthly_metrics if (m.get(key) or 0) > 0]
+            return min(valid, key=lambda x: x[key]) if valid else None
+
+        highest_fwt       = safe_max("fresh_water_tank")
+        lowest_fwt        = safe_min("fresh_water_tank")
+        highest_withdraw  = safe_max("withdrawal")
+        lowest_withdraw   = safe_min("withdrawal")
+        best_recycle      = safe_max("recycle_efficiency")
+        highest_discharge = safe_max("discharge")
+
+        # Prefer withdrawal for intake; fall back to fresh_water_tank
+        has_withdrawal  = highest_withdraw is not None
+        has_recycle     = best_recycle     is not None
+        has_discharge   = highest_discharge is not None
+
+        highest_intake = highest_withdraw if has_withdrawal else highest_fwt
+        lowest_intake  = lowest_withdraw  if has_withdrawal else lowest_fwt
+        intake_label   = "withdrawal"     if has_withdrawal else "fresh water tank"
+        intake_key     = "withdrawal"     if has_withdrawal else "fresh_water_tank"
+
+        insights = {
+            "highest_intake_month": {
+                "month":      highest_intake["month"]       if highest_intake else None,
+                "month_name": highest_intake["month_name"]  if highest_intake else None,
+                "value":      highest_intake[intake_key]    if highest_intake else 0,
+                "label":      intake_label,
+            },
+            "lowest_intake_month": {
+                "month":      lowest_intake["month"]        if lowest_intake else None,
+                "month_name": lowest_intake["month_name"]   if lowest_intake else None,
+                "value":      lowest_intake[intake_key]     if lowest_intake else 0,
+                "label":      intake_label,
+            },
+            "best_recycle_month": {
+                "month":      best_recycle["month"]              if has_recycle else None,
+                "month_name": best_recycle["month_name"]         if has_recycle else None,
+                "value":      best_recycle["recycle_efficiency"] if has_recycle else 0,
+                "available":  has_recycle,
+            },
+            "highest_discharge_month": {
+                "month":      highest_discharge["month"]      if has_discharge else None,
+                "month_name": highest_discharge["month_name"] if has_discharge else None,
+                "value":      highest_discharge["discharge"]  if has_discharge else 0,
+                "available":  has_discharge,
+            },
+            "highest_fresh_water_tank_month": {
+                "month":      highest_fwt["month"]            if highest_fwt else None,
+                "month_name": highest_fwt["month_name"]       if highest_fwt else None,
+                "value":      highest_fwt["fresh_water_tank"] if highest_fwt else 0,
+                "available":  highest_fwt is not None,
+            },
+            "lowest_fresh_water_tank_month": {
+                "month":      lowest_fwt["month"]            if lowest_fwt else None,
+                "month_name": lowest_fwt["month_name"]       if lowest_fwt else None,
+                "value":      lowest_fwt["fresh_water_tank"] if lowest_fwt else 0,
+                "available":  lowest_fwt is not None,
+            },
+            # Flags so frontend knows what data exists for this year
+            "has_withdrawal_data": has_withdrawal,
+            "has_recycle_data":    has_recycle,
+            "has_discharge_data":  has_discharge,
+            "year":                y,
+        }
+
+        return {
+            "status": "success",
+            "year": y,
+            "data": {
+                "summary": {
+                    "total_withdrawal":          total_withdrawal,
+                    "total_fresh_water_tank":    total_fresh_water,
+                    "total_discharge":           total_discharge,
+                    "total_recycle_volume":      total_recycle_volume,
+                    "total_recycling_volume":    total_recycle_volume,
+                    "total_recyling_volume":     total_recycle_volume,
+                    "overall_recycle_efficiency":    overall_efficiency,
+                    "overall_recycling_efficiency":  overall_efficiency,
+                    "overall_recycling_efficency":   overall_efficiency,
+                },
+                "monthly_breakdown": months_data,
+                "key_insights":      insights,
+            },
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
