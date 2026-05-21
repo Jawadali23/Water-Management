@@ -1,0 +1,25 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: water-management-backend
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8000}:${PORT:-8000}"
+    environment:
+      - HOST=${HOST:-0.0.0.0}
+      - PORT=${PORT:-8000}
+      - ENV=${ENV:-development}
+      - SQL_SERVER=${SQL_SERVER:-host.docker.internal,1433}
+      - SQL_DATABASE=${SQL_DATABASE:-Water_Management}
+      - USE_WINDOWS_AUTH=${USE_WINDOWS_AUTH:-False}
+      - SQL_USERNAME=${SQL_USERNAME:-jawad}
+      - SQL_PASSWORD=${SQL_PASSWORD:-123456}
+      - SQL_DRIVER=${SQL_DRIVER:-ODBC Driver 17 for SQL Server}
+    extra_hosts:
+      # Allows resolving the host computer via host.docker.internal on Linux/Docker environments
+      - "host.docker.internal:host-gateway"
+    volumes:
+      # Mapped volume to persist the Excel spreadsheets on the host machine
+      - ./manual_data:/app/manual_data

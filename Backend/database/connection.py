@@ -1,15 +1,20 @@
+import os
 import pyodbc
 
-SQL_SERVER   = r"HPLAPTOP15DW\SQLEXPRESS01"
-SQL_DATABASE = "Water_Management"
-USE_WINDOWS_AUTH = False
-SQL_USERNAME = "jawad"
-SQL_PASSWORD = "123456"
+SQL_SERVER   = os.getenv("SQL_SERVER", r"HPLAPTOP15DW\SQLEXPRESS01")
+SQL_DATABASE = os.getenv("SQL_DATABASE", "Water_Management")
+
+USE_WINDOWS_AUTH_ENV = os.getenv("USE_WINDOWS_AUTH", "False")
+USE_WINDOWS_AUTH = USE_WINDOWS_AUTH_ENV.lower() in ("true", "1", "yes")
+
+SQL_USERNAME = os.getenv("SQL_USERNAME", "jawad")
+SQL_PASSWORD = os.getenv("SQL_PASSWORD", "123456")
+SQL_DRIVER   = os.getenv("SQL_DRIVER", "ODBC Driver 17 for SQL Server")
 
 def get_db_connection():
 
     base = (
-        f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+        f"DRIVER={{{SQL_DRIVER}}};"
         f"SERVER={SQL_SERVER};"
         f"DATABASE={SQL_DATABASE};"
     )

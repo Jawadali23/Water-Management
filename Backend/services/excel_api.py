@@ -116,8 +116,14 @@ def open_excel():
     try:
         _ensure_workbook(WORKBOOK_PATH)
         _sync_legacy_copy(WORKBOOK_PATH)
-        os.startfile(WORKBOOK_PATH)
-        return {"message": "Excel opened successfully"}
+        if hasattr(os, "startfile"):
+            os.startfile(WORKBOOK_PATH)
+            return {"message": "Excel opened successfully"}
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Opening Excel file directly on the host is not supported in this environment. Please download it instead."
+            )
     except HTTPException:
         raise
     except Exception as exc:
