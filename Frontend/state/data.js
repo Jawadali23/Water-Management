@@ -16,7 +16,7 @@ let globalFilter={from:null,to:null};
 const charts={};
 const liveR={wpu:12.5,dpu:3.8,wpu2:10.2,dpu2:3.1,wpuU:4.2,dpuU:1.1};
 const fs={};
-const API='http://localhost:8000';
+const API=(window.__WMS_CONFIG__ && window.__WMS_CONFIG__.API_BASE_URL) ? window.__WMS_CONFIG__.API_BASE_URL : 'http://localhost:8000';
 const dpl1Api={cards:null,rawCards:null,mainChart:null,recyclingChart:null,loading:null,loadingKey:'',requestSeq:0,error:'',defaultsApplied:false,range:'td'};
 function getfs(id){return fs[id]||(fs[id]={p:'daily',w:'',mo:'',yr:''});}
 
