@@ -23,21 +23,22 @@ def _load_scoped_cards_dataframe(
     date_from: str | None,
     date_to: str | None,
 ):
-    df = load_sql_data()
-    current_df = get_filtered_dataframe(
-        df,
-        range,
-        year=year,
-        date_from=date_from,
-        date_to=date_to,
-    )
+    """
+    Resolve date bounds first via the cached database dataframe,
+    then load only the precisely filtered records from SQL.
+    (Requirement 3 & 4)
+    """
+    df_full = load_sql_data()
     bounds = get_range_date_bounds(
-        df,
+        df_full,
         range,
         year=year,
         date_from=date_from,
         date_to=date_to,
     )
+    start_date = bounds.get("date_from")
+    end_date = bounds.get("date_to")
+    current_df = load_sql_data(start_date, end_date)
     return current_df, bounds
 
 
@@ -59,7 +60,7 @@ def fresh_water_tank(
             "card": "Fresh Water Tank",
             **bounds,
             "value": current,
-            "unit": "mÂ³",
+            "unit": "m³",
             "meters": sheet_difference_totals(current_df, "fresh_water_tank"),
         }
 
@@ -85,7 +86,7 @@ def water_withdrawal(
             "card": "Water Withdrawal",
             **bounds,
             "value": current,
-            "unit": "mÂ³",
+            "unit": "m³",
             "meters": sheet_difference_totals(current_df, *WITHDRAWAL_SOURCE_KEYS),
         }
 
@@ -111,7 +112,7 @@ def recycle_volume(
             "card": "Recycle Volume",
             **bounds,
             "value": current,
-            "unit": "mÂ³",
+            "unit": "m³",
             "meters": sheet_difference_totals(
                 current_df, "wwtp_ro_in", "wwtp_ro_rejection"
             ),
@@ -139,7 +140,7 @@ def factory_discharge(
             "card": "Factory Discharge",
             **bounds,
             "value": current,
-            "unit": "mÂ³",
+            "unit": "m³",
             "meters": sheet_difference_totals(current_df, "wwtp_in", "wwtp_ro_in"),
         }
 
@@ -156,8 +157,7 @@ def all_cards(
 ):
     """All dashboard cards in one response.
 
-    ``range`` matches the per-card endpoints (from Excel, reloaded when the file changes).
-
+    ``range`` matches the per-card endpoints.
     - ``td`` - latest day in the selected scope.
     - ``mtd`` - full calendar month of that latest day.
     - ``ytd`` - 1 Jan through latest day in the selected scope.
@@ -182,19 +182,19 @@ def all_cards(
                 "fresh_water_tank": {
                     "card": "Fresh Water Tank",
                     "value": fetch_meter_total(current_df, METERS["fresh_water_tank"]),
-                    "unit": "mÂ³",
+                    "unit": "m³",
                     "meters": sheet_difference_totals(current_df, "fresh_water_tank"),
                 },
                 "water_withdrawal": {
                     "card": "Water Withdrawal",
                     "value": calculate_withdrawal(current_df),
-                    "unit": "mÂ³",
+                    "unit": "m³",
                     "meters": sheet_difference_totals(current_df, *WITHDRAWAL_SOURCE_KEYS),
                 },
                 "recycle_volume": {
                     "card": "Recycle Volume",
                     "value": calculate_recycle_volume(current_df),
-                    "unit": "mÂ³",
+                    "unit": "m³",
                     "meters": sheet_difference_totals(
                         current_df, "wwtp_ro_in", "wwtp_ro_rejection"
                     ),
@@ -202,7 +202,7 @@ def all_cards(
                 "factory_discharge": {
                     "card": "Factory Discharge",
                     "value": calculate_discharge(current_df),
-                    "unit": "mÂ³",
+                    "unit": "m³",
                     "meters": sheet_difference_totals(current_df, "wwtp_in", "wwtp_ro_in"),
                 },
                 "recycling_percent": {

@@ -1,106 +1,147 @@
+import time
+import threading
+from datetime import datetime, date
 import pandas as pd
 from database.connection import get_db_connection
 from services.calculation_service import METERS
 
-def load_sql_data() -> pd.DataFrame:
+# Simple dictionary-based TTL cache
+_CACHE = {}
+_CACHE_LOCK = threading.Lock()
+CACHE_TTL = 60  # seconds
+
+# Cache for the latest database date to speed up date boundary computations
+_LATEST_DATE_CACHE = (None, 0)
+
+def clear_cache():
+    """Clear all caches."""
+    with _CACHE_LOCK:
+        _CACHE.clear()
+    global _LATEST_DATE_CACHE
+    _LATEST_DATE_CACHE = (None, 0)
+
+def get_latest_date(bypass_cache: bool = False) -> pd.Timestamp:
+    """Fetch the latest date from the database. Uses caching."""
+    global _LATEST_DATE_CACHE
+    if not bypass_cache:
+        cached_val, expiry = _LATEST_DATE_CACHE
+        if cached_val is not None and time.time() < expiry:
+            return cached_val
+            
     conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT MAX([DATE]) FROM vw_combined_meters")
+    row = cursor.fetchone()
+    conn.close()
+    
+    latest = pd.Timestamp(row[0]) if row and row[0] else pd.Timestamp.now()
+    _LATEST_DATE_CACHE = (latest, time.time() + CACHE_TTL)
+    return latest
 
-    # COMBINED HISTORICAL + LIVE DATA
-    query = "SELECT * FROM vw_combined_meters"
+def load_sql_data(
+    start_date: datetime | date | str | None = None,
+    end_date: datetime | date | str | None = None,
+    bypass_cache: bool = False
+) -> pd.DataFrame:
+    """
+    Optimized database data loader.
+    - Only queries necessary columns (avoids SELECT *).
+    - Moves date filtering from pandas to SQL Server.
+    - Caches results for 60 seconds (thread-safe).
+    - Uses highly optimized pandas mapping and melting operations.
+    """
+    # Convert inputs to ISO date string format (YYYY-MM-DD) for standard cache key
+    def to_str(d):
+        if d is None:
+            return None
+        if isinstance(d, (datetime, date)):
+            return d.strftime("%Y-%m-%d")
+        d_str = str(d).strip()
+        if not d_str:
+            return None
+        return d_str[:10]
 
+    s_str = to_str(start_date)
+    e_str = to_str(end_date)
+    cache_key = (s_str, e_str)
+
+    if not bypass_cache:
+        with _CACHE_LOCK:
+            cached_val, expiry = _CACHE.get(cache_key, (None, 0))
+            if cached_val is not None and time.time() < expiry:
+                return cached_val.copy()
+
+    # Hardcoded mapping of columns to METERS values
+    _COLUMN_TO_METER = {
+        "FRESH WATER TANK_DIFFERENCE (m3)": METERS["fresh_water_tank"],
+        "OVERHEAD ADMIN TANK_DIFFERENCE (m3)": METERS["overhead_admin_tank"],
+        "WELL WATER_DIFFERENCE (m3)": METERS["well_water"],
+        "DOMESTIC FRESH WATER_DIFFERENCE (m3)": METERS["domestic_fresh_water"],
+        "Drinking Water RO plant_DIFFERENCE (m3)": METERS["drinking_water_ro_plant"],
+        "WWTP IN_DIFFERENCE (m3)": METERS["wwtp_in"],
+        "WWTP RO PLANT IN_DIFFERENCE (m3)": METERS["wwtp_ro_in"],
+        "WWTP RO PLANT REJECTION_DIFFERENCE (m3)": METERS["wwtp_ro_rejection"],
+    }
+
+    cols = ["[DATE]"] + [f"[{col}]" for col in _COLUMN_TO_METER.keys()]
+    query = f"SELECT {', '.join(cols)} FROM vw_combined_meters"
+    params = []
+
+    # Move filtering into SQL
+    if s_str and e_str:
+        query += " WHERE [DATE] BETWEEN ? AND ?"
+        params = [s_str + " 00:00:00", e_str + " 23:59:59.999"]
+    elif s_str:
+        query += " WHERE [DATE] >= ?"
+        params = [s_str + " 00:00:00"]
+    elif e_str:
+        query += " WHERE [DATE] <= ?"
+        params = [e_str + " 23:59:59.999"]
+
+    conn = get_db_connection()
     import warnings
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        raw = pd.read_sql(query, conn)
-
+        if params:
+            raw = pd.read_sql(query, conn, params=params)
+        else:
+            raw = pd.read_sql(query, conn)
     conn.close()
 
-    _EXCEL_HEADER_TO_METER = {
-        "FRESH WATER TANK": METERS["fresh_water_tank"],
-        "OVERHEAD ADMIN TANK": METERS["overhead_admin_tank"],
-        "WELL WATER": METERS["well_water"],
-        "DOMESTIC FRESH WATER": METERS["domestic_fresh_water"],
-        "Drinking Water RO plant": METERS["drinking_water_ro_plant"],
-        "WWTP IN": METERS["wwtp_in"],
-        "WWTP RO PLANT IN": METERS["wwtp_ro_in"],
-        "WWTP RO PLANT REJECTION": METERS["wwtp_ro_rejection"],
-    }
+    if raw.empty:
+        df_long = pd.DataFrame(columns=["DATE", "METER", "DIFFERENCE"])
+    else:
+        # Convert DATE column
+        raw["DATE"] = pd.to_datetime(raw["DATE"], errors="coerce")
+        raw = raw.dropna(subset=["DATE"])
 
-    # DATE COLUMN
-    date_col = next(
-        (c for c in raw.columns if "DATE" in str(c).upper()),
-        None
-    )
-
-    if not date_col:
-        return pd.DataFrame()
-
-    # DIFFERENCE COLUMNS
-    diff_cols = {}
-
-    for key, meter in _EXCEL_HEADER_TO_METER.items():
-
-        for c in raw.columns:
-
-            c_upper = str(c).upper()
-
-            if (
-                key.upper() in c_upper
-                and "DIFFERENCE" in c_upper
-                and not c_upper.endswith(".1")
-            ):
-
-                diff_cols[c] = meter
-                break
-
-    if not diff_cols:
-        return pd.DataFrame()
-
-    # SUBSET
-    df_subset = raw[[date_col] + list(diff_cols.keys())].copy()
-
-    # DATE PARSING
-    df_subset[date_col] = pd.to_datetime(
-        df_subset[date_col],
-        errors="coerce"
-    )
-
-    df_subset = df_subset.dropna(subset=[date_col])
-
-    # MELT
-    df_long = df_subset.melt(
-        id_vars=[date_col],
-        value_vars=list(diff_cols.keys()),
-        var_name="RAW_METER",
-        value_name="DIFFERENCE"
-    )
-
-    # MAP METER NAMES
-    df_long["METER"] = df_long["RAW_METER"].map(diff_cols)
-
-    # NUMERIC CONVERSION
-    df_long["DIFFERENCE"] = pd.to_numeric(
-        df_long["DIFFERENCE"],
-        errors="coerce"
-    )
-
-    df_long = df_long.dropna(subset=["DIFFERENCE"])
-
-    # FINAL FORMAT
-    df_long = df_long.rename(columns={date_col: "DATE"})
-
-    df_long = df_long[
-        ["DATE", "METER", "DIFFERENCE"]
-    ]
-
-    # REMOVE DUPLICATES
-    df_long = (
-        df_long
-        .sort_values("DATE")
-        .drop_duplicates(
-            subset=["DATE", "METER"],
-            keep="last"
+        # Melt raw to long format
+        df_long = raw.melt(
+            id_vars=["DATE"],
+            value_vars=list(_COLUMN_TO_METER.keys()),
+            var_name="RAW_METER",
+            value_name="DIFFERENCE"
         )
-    )
 
-    return df_long
+        # Map meter names
+        df_long["METER"] = df_long["RAW_METER"].map(_COLUMN_TO_METER)
+
+        # Convert DIFFERENCE to numeric and drop NaNs
+        df_long["DIFFERENCE"] = pd.to_numeric(df_long["DIFFERENCE"], errors="coerce")
+        df_long = df_long.dropna(subset=["DIFFERENCE"])
+
+        # Keep only DATE, METER, DIFFERENCE
+        df_long = df_long[["DATE", "METER", "DIFFERENCE"]]
+
+        # Sort and drop duplicates efficiently
+        df_long = (
+            df_long
+            .sort_values("DATE")
+            .drop_duplicates(subset=["DATE", "METER"], keep="last")
+        )
+
+    if not bypass_cache:
+        with _CACHE_LOCK:
+            _CACHE[cache_key] = (df_long, time.time() + CACHE_TTL)
+
+    return df_long.copy()

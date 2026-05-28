@@ -5,7 +5,7 @@ import pandas as pd
 from fastapi import APIRouter, HTTPException
 
 from database.connection import get_db_connection
-from services.sql_service import load_sql_data
+from services.sql_service import load_sql_data, get_latest_date
 from services.calculation_service import (
     calculate_withdrawal,
     calculate_discharge,
@@ -29,28 +29,26 @@ def _label_mmm_yy(ts: pd.Timestamp) -> str:
     return t.strftime("%b-%y")
 
 def _resolve_selected_year(
-    df: pd.DataFrame,
+    latest_ts: pd.Timestamp,
     year: int | None,
     *,
     min_year: int = 2019,
 ) -> int:
-    latest = pd.Timestamp(df["DATE"].max()).normalize()
-    y = int(year) if year is not None else int(latest.year)
+    y = int(year) if year is not None else int(latest_ts.year)
     if y < min_year:
         raise HTTPException(status_code=400, detail=f"year must be >= {min_year}")
     return y
 
 
 def _resolve_selected_month_year(
-    df: pd.DataFrame,
+    latest_ts: pd.Timestamp,
     year: int | None,
     month: int | None,
     *,
     min_year: int = 2019,
 ) -> tuple[int, int]:
-    latest = pd.Timestamp(df["DATE"].max()).normalize()
-    y = int(year) if year is not None else int(latest.year)
-    m = int(month) if month is not None else int(latest.month)
+    y = int(year) if year is not None else int(latest_ts.year)
+    m = int(month) if month is not None else int(latest_ts.month)
     if y < min_year:
         raise HTTPException(status_code=400, detail=f"year must be >= {min_year}")
     if not 1 <= m <= 12:
@@ -59,20 +57,19 @@ def _resolve_selected_month_year(
 
 
 def _resolve_selected_week_window(
-    df: pd.DataFrame,
+    latest_ts: pd.Timestamp,
     *,
     year: int | None,
     month: int | None,
     week: int | None,
     min_year: int = 2019,
 ) -> tuple[pd.Timestamp, pd.Timestamp]:
-    latest = pd.Timestamp(df["DATE"].max()).normalize()
-    y, m = _resolve_selected_month_year(df, year=year, month=month, min_year=min_year)
+    y, m = _resolve_selected_month_year(latest_ts, year=year, month=month, min_year=min_year)
     _, last_day = calendar.monthrange(y, m)
 
     if week is None:
-        if y == int(latest.year) and m == int(latest.month):
-            w = ((int(latest.day) - 1) // 7) + 1
+        if y == int(latest_ts.year) and m == int(latest_ts.month):
+            w = ((int(latest_ts.day) - 1) // 7) + 1
         else:
             w = 1
     else:
@@ -102,100 +99,78 @@ def dashboard(
     day: int | None = None,
 ):
     try:
-        df = load_sql_data()
+        latest_ts = get_latest_date()
+        
+        # 1. Resolve exact date boundaries beforehand to filter in SQL (Requirement 3 & 5)
+        if chart_range == "weekly":
+            start_ts, end_ts = _resolve_selected_week_window(
+                latest_ts, year=year, month=month, week=week
+            )
+        elif chart_range == "monthly" or chart_range == "daily":
+            y, m = _resolve_selected_month_year(latest_ts, year=year, month=month)
+            _, last_d = calendar.monthrange(y, m)
+            start_ts = pd.Timestamp(date(y, m, 1)).normalize()
+            end_ts = pd.Timestamp(date(y, m, last_d)).normalize()
+        elif chart_range == "yearly":
+            y = _resolve_selected_year(latest_ts, year=year)
+            start_ts = pd.Timestamp(date(y, 1, 1)).normalize()
+            end_ts = pd.Timestamp(date(y, 12, 31)).normalize()
+        else:
+            raise HTTPException(status_code=400, detail="Invalid chart range")
+
+        # 2. Query scoped SQL data directly instead of full view (Requirement 3 & 5)
+        df = load_sql_data(start_ts, end_ts)
         if df.empty:
             return {
                 "status": "success",
-                "date_from": None,
-                "date_to": None,
+                "date_from": start_ts.date().isoformat(),
+                "date_to": end_ts.date().isoformat(),
                 "labels": [],
                 "datasets": {},
             }
 
-        filtered = df
+        # 3. Pre-normalize date column for optimized loop comparisons (Requirement 6)
+        df["DATE_NORM"] = df["DATE"].dt.normalize()
 
-        meta: dict[str, object] = {}
         labels: list[str] = []
         wd_series: list[float] = []
         fwt_series: list[float] = []
         dc_series: list[float] = []
 
         if chart_range == "weekly":
-            # Selected week-of-month (1..5), based on selected month/year.
-            start_ts, end_ts = _resolve_selected_week_window(
-                df, year=year, month=month, week=week
-            )
             for ts in pd.date_range(start=start_ts, end=end_ts, freq="D"):
-                day = pd.Timestamp(ts).normalize()
-                day_data = filtered[filtered["DATE"].dt.normalize() == day]
-                labels.append(_label_d_mmm_yy(day))
+                day_ts = pd.Timestamp(ts).normalize()
+                day_data = df[df["DATE_NORM"] == day_ts]
+                labels.append(_label_d_mmm_yy(day_ts))
                 wd_series.append(calculate_withdrawal(day_data))
                 fwt_series.append(
                     fetch_meter_total(day_data, METERS["fresh_water_tank"])
                 )
                 dc_series.append(calculate_discharge(day_data))
 
-            date_from = start_ts.date().isoformat()
-            date_to = end_ts.date().isoformat()
-
-        elif chart_range == "monthly":
-            # Full selected month/year (or latest if not provided), one point per day.
-            y, m = _resolve_selected_month_year(df, year=year, month=month)
-            _, last_d = calendar.monthrange(y, m)
-            for d in pd.date_range(
-                start=date(y, m, 1), end=date(y, m, last_d), freq="D"
-            ):
-                ts = pd.Timestamp(d).normalize()
-                day_data = filtered[filtered["DATE"].dt.normalize() == ts]
-                labels.append(_label_d_mmm_yy(ts))
+        elif chart_range == "monthly" or chart_range == "daily":
+            for d in pd.date_range(start=start_ts, end=end_ts, freq="D"):
+                day_ts = pd.Timestamp(d).normalize()
+                day_data = df[df["DATE_NORM"] == day_ts]
+                labels.append(_label_d_mmm_yy(day_ts))
                 wd_series.append(calculate_withdrawal(day_data))
                 fwt_series.append(
                     fetch_meter_total(day_data, METERS["fresh_water_tank"])
                 )
                 dc_series.append(calculate_discharge(day_data))
-
-            date_from = date(y, m, 1).isoformat()
-            date_to = date(y, m, last_d).isoformat()
 
         elif chart_range == "yearly":
-            # Selected year (or latest if not provided), one point per month.
-            y = _resolve_selected_year(df, year=year)
+            y = start_ts.year
+            df["YEAR"] = df["DATE"].dt.year
+            df["MONTH"] = df["DATE"].dt.month
             for m in range(1, 13):
-                month_data = filtered[
-                    (filtered["DATE"].dt.year == y) & (filtered["DATE"].dt.month == m)
-                ]
+                month_data = df[(df["YEAR"] == y) & (df["MONTH"] == m)]
                 labels.append(_label_mmm_yy(pd.Timestamp(date(y, m, 1))))
                 wd_series.append(calculate_withdrawal(month_data))
                 fwt_series.append(
                     fetch_meter_total(month_data, METERS["fresh_water_tank"])
                 )
                 dc_series.append(calculate_discharge(month_data))
-
-            date_from = date(y, 1, 1).isoformat()
-            date_to = date(y, 12, 31).isoformat()
-
-        elif chart_range == "daily":
-            # Each calendar day in the selected month (Feb 28/29, etc.); use ``year`` / ``month``
-            # like ``monthly`` so the charts can drive day-granularity selectors.
-            y, m = _resolve_selected_month_year(df, year=year, month=month)
-            _, last_d = calendar.monthrange(y, m)
-            for d in pd.date_range(
-                start=date(y, m, 1), end=date(y, m, last_d), freq="D"
-            ):
-                ts = pd.Timestamp(d).normalize()
-                day_data = filtered[filtered["DATE"].dt.normalize() == ts]
-                labels.append(_label_d_mmm_yy(ts))
-                wd_series.append(calculate_withdrawal(day_data))
-                fwt_series.append(
-                    fetch_meter_total(day_data, METERS["fresh_water_tank"])
-                )
-                dc_series.append(calculate_discharge(day_data))
-
-            date_from = date(y, m, 1).isoformat()
-            date_to = date(y, m, last_d).isoformat()
-
-        else:
-            raise HTTPException(status_code=400, detail="Invalid chart range")
 
         if metric == "all":
             datasets = {
@@ -214,11 +189,10 @@ def dashboard(
 
         return {
             "status": "success",
-            "date_from": date_from,
-            "date_to": date_to,
+            "date_from": start_ts.date().isoformat(),
+            "date_to": end_ts.date().isoformat(),
             "labels": labels,
             "datasets": datasets,
-            **meta,
         }
 
     except HTTPException:
@@ -229,11 +203,7 @@ def dashboard(
 
 @router.get("/date-options")
 def date_options(year: int | None = None, month: int | None = None):
-    """Frontend helper: return available dates/months/years from the Excel.
-
-    If ``year`` and ``month`` are set, also returns ``days`` (1 … last calendar day)
-    for building a day selector with daily charts (e.g. 28/29 in February).
-    """
+    """Frontend helper: return available dates/months/years from the Excel."""
     try:
         df = load_sql_data()
         if df.empty:
@@ -304,12 +274,21 @@ def get_meter_status():
 @router.get("/review")
 def review_page(year: int | None = None):
     try:
-        df = load_sql_data()
+        latest_ts = get_latest_date()
+        y = _resolve_selected_year(latest_ts, year=year)
+        
+        # Filter in SQL for only this year (Requirement 3)
+        start_date = date(y, 1, 1)
+        end_date = date(y, 12, 31)
+        df = load_sql_data(start_date, end_date)
+        
         if df.empty:
-            return {"status": "success", "year": year, "data": {}}
+            return {"status": "success", "year": y, "data": {}}
 
-        y = _resolve_selected_year(df, year=year)
-        year_data = df[df["DATE"].dt.year == y]
+        # Pre-extract month and year for fast pandas filtering (Requirement 6)
+        df["YEAR"] = df["DATE"].dt.year
+        df["MONTH"] = df["DATE"].dt.month
+        year_data = df[df["YEAR"] == y]
 
         if year_data.empty:
             return {"status": "success", "year": y, "data": {}}
@@ -317,7 +296,7 @@ def review_page(year: int | None = None):
         # ── Monthly breakdown ─────────────────────────────────────────────────
         months_data = []
         for m in range(1, 13):
-            month_data = year_data[year_data["DATE"].dt.month == m]
+            month_data = year_data[year_data["MONTH"] == m]
             if month_data.empty:
                 continue
 
@@ -335,11 +314,7 @@ def review_page(year: int | None = None):
                 "fresh_water_tank":     fresh_water,
                 "discharge":            discharge,
                 "recycle_volume":       recycle_volume,
-                # "recycling_volume":     recycle_volume,
-                # "recyling_volume":      recycle_volume,
                 "recycle_efficiency":   recycle_efficiency,
-                # "recycling_efficiency": recycle_efficiency,
-                # "recycling_efficency":  recycle_efficiency,
             })
 
         # ── Year summary ──────────────────────────────────────────────────────
@@ -352,7 +327,7 @@ def review_page(year: int | None = None):
         # ── Monthly metrics for insights ──────────────────────────────────────
         monthly_metrics = []
         for m in range(1, 13):
-            month_data = year_data[year_data["DATE"].dt.month == m]
+            month_data = year_data[year_data["MONTH"] == m]
             if month_data.empty:
                 continue
 
@@ -372,7 +347,6 @@ def review_page(year: int | None = None):
             })
 
         # ── Key insights ──────────────────────────────────────────────────────
-        # Helper: only consider months where the metric has real data (> 0)
         def safe_max(key):
             valid = [m for m in monthly_metrics if (m.get(key) or 0) > 0]
             return max(valid, key=lambda x: x[key]) if valid else None
@@ -388,7 +362,6 @@ def review_page(year: int | None = None):
         best_recycle      = safe_max("recycle_efficiency")
         highest_discharge = safe_max("discharge")
 
-        # Prefer withdrawal for intake; fall back to fresh_water_tank
         has_withdrawal  = highest_withdraw is not None
         has_recycle     = best_recycle     is not None
         has_discharge   = highest_discharge is not None
@@ -435,7 +408,6 @@ def review_page(year: int | None = None):
                 "value":      lowest_fwt["fresh_water_tank"] if lowest_fwt else 0,
                 "available":  lowest_fwt is not None,
             },
-            # Flags so frontend knows what data exists for this year
             "has_withdrawal_data": has_withdrawal,
             "has_recycle_data":    has_recycle,
             "has_discharge_data":  has_discharge,

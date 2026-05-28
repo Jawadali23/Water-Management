@@ -9,7 +9,7 @@ from services.calculation_service import (
     calculate_recycling_percent,
     sheet_difference_totals,
 )
-from services.sql_service import load_sql_data
+from services.sql_service import load_sql_data, get_latest_date
 from utils.filters import get_filtered_dataframe, get_range_date_bounds
 
 router = APIRouter(prefix="/api")
@@ -28,28 +28,26 @@ def _label_mmm_yy(ts: pd.Timestamp) -> str:
 
 
 def _resolve_selected_year(
-    df: pd.DataFrame,
+    latest_ts: pd.Timestamp,
     year: int | None,
     *,
     min_year: int = 2019,
 ) -> int:
-    latest = pd.Timestamp(df["DATE"].max()).normalize()
-    y = int(year) if year is not None else int(latest.year)
+    y = int(year) if year is not None else int(latest_ts.year)
     if y < min_year:
         raise HTTPException(status_code=400, detail=f"year must be >= {min_year}")
     return y
 
 
 def _resolve_selected_month_year(
-    df: pd.DataFrame,
+    latest_ts: pd.Timestamp,
     year: int | None,
     month: int | None,
     *,
     min_year: int = 2019,
 ) -> tuple[int, int]:
-    latest = pd.Timestamp(df["DATE"].max()).normalize()
-    y = int(year) if year is not None else int(latest.year)
-    m = int(month) if month is not None else int(latest.month)
+    y = int(year) if year is not None else int(latest_ts.year)
+    m = int(month) if month is not None else int(latest_ts.month)
     if y < min_year:
         raise HTTPException(status_code=400, detail=f"year must be >= {min_year}")
     if not 1 <= m <= 12:
@@ -58,20 +56,19 @@ def _resolve_selected_month_year(
 
 
 def _resolve_selected_week_window(
-    df: pd.DataFrame,
+    latest_ts: pd.Timestamp,
     *,
     year: int | None,
     month: int | None,
     week: int | None,
     min_year: int = 2019,
 ) -> tuple[pd.Timestamp, pd.Timestamp]:
-    latest = pd.Timestamp(df["DATE"].max()).normalize()
-    y, m = _resolve_selected_month_year(df, year=year, month=month, min_year=min_year)
+    y, m = _resolve_selected_month_year(latest_ts, year=year, month=month, min_year=min_year)
     _, last_day = calendar.monthrange(y, m)
 
     if week is None:
-        if y == int(latest.year) and m == int(latest.month):
-            w = ((int(latest.day) - 1) // 7) + 1
+        if y == int(latest_ts.year) and m == int(latest_ts.month):
+            w = ((int(latest_ts.day) - 1) // 7) + 1
         else:
             w = 1
     else:
@@ -99,10 +96,19 @@ def recycling_percent(
     date_to: str | None = None,
 ):
     try:
-        df = load_sql_data()
-        current_df = get_filtered_dataframe(
-            df, range, year=year, date_from=date_from, date_to=date_to
+        # 1. Resolve date bounds first using the cached full df (which is instant due to caching)
+        df_full = load_sql_data()
+        bounds = get_range_date_bounds(
+            df_full, range, year=year, date_from=date_from, date_to=date_to
         )
+        
+        # 2. Extract bounds
+        start_date = bounds.get("date_from")
+        end_date = bounds.get("date_to")
+        
+        # 3. Load only the scoped data from SQL (Requirement 3)
+        current_df = load_sql_data(start_date, end_date)
+        
         current = calculate_recycling_percent(current_df)
 
         meters = sheet_difference_totals(current_df, *WITHDRAWAL_SOURCE_KEYS)
@@ -113,9 +119,7 @@ def recycling_percent(
         return {
             "status": "success",
             "card": "Recycling Percent",
-            **get_range_date_bounds(
-                df, range, year=year, date_from=date_from, date_to=date_to
-            ),
+            **bounds,
             "value": current,
             "unit": "%",
             "meters": meters,
@@ -133,84 +137,72 @@ def recycling_percent_chart(
     week: int | None = None,
     day: int | None = None,
 ):
-    """Time series for recycling % (same buckets as ``/api/dashboard``).
-
-    ``chart_range``: ``daily`` | ``hourly`` | ``weekly`` | ``monthly`` | ``yearly``.
-
-    ``daily`` and ``monthly`` both return one point per calendar day for the
-    selected ``year`` / ``month`` (28-31 points depending on the month).
-
-    ``hourly`` uses ``[10:30, next day 10:30)`` on the selected calendar ``day``
-    (optional ``year`` / ``month``): 24 buckets by hour offset from 10:30, with
-    labels ``10:30`` ... ``09:30``; recycling % is from cumulative meter totals in that window.
-    """
     try:
-        df = load_sql_data()
+        latest_ts = get_latest_date()
+        
+        # 1. Resolve date boundaries (Requirement 3)
+        if chart_range == "weekly":
+            start_ts, end_ts = _resolve_selected_week_window(
+                latest_ts, year=year, month=month, week=week
+            )
+        elif chart_range == "monthly" or chart_range == "daily":
+            y, m = _resolve_selected_month_year(latest_ts, year=year, month=month)
+            _, last_d = calendar.monthrange(y, m)
+            start_ts = pd.Timestamp(date(y, m, 1)).normalize()
+            end_ts = pd.Timestamp(date(y, m, last_d)).normalize()
+        elif chart_range == "yearly":
+            y = _resolve_selected_year(latest_ts, year=year)
+            start_ts = pd.Timestamp(date(y, 1, 1)).normalize()
+            end_ts = pd.Timestamp(date(y, 12, 31)).normalize()
+        else:
+            raise HTTPException(status_code=400, detail="Invalid chart range")
+
+        # 2. Scoped database loading (Requirement 3)
+        df = load_sql_data(start_ts, end_ts)
         if df.empty:
             return {
                 "status": "success",
                 "chart_range": chart_range,
-                "date_from": None,
-                "date_to": None,
+                "date_from": start_ts.date().isoformat() if 'start_ts' in locals() else None,
+                "date_to": end_ts.date().isoformat() if 'end_ts' in locals() else None,
                 "labels": [],
                 "datasets": {"recycling_percent": []},
             }
 
-        filtered = df
+        # 3. Pre-normalize date column for optimized loop comparisons (Requirement 6)
+        df["DATE_NORM"] = df["DATE"].dt.normalize()
+
         labels: list[str] = []
         series: list[float] = []
 
         if chart_range == "weekly":
-            start_ts, end_ts = _resolve_selected_week_window(
-                df, year=year, month=month, week=week
-            )
             for ts in pd.date_range(start=start_ts, end=end_ts, freq="D"):
                 day_ts = pd.Timestamp(ts).normalize()
-                day_data = filtered[filtered["DATE"].dt.normalize() == day_ts]
+                day_data = df[df["DATE_NORM"] == day_ts]
                 labels.append(_label_d_mmm_yy(day_ts))
                 series.append(calculate_recycling_percent(day_data))
             date_from = start_ts.date().isoformat()
             date_to = end_ts.date().isoformat()
 
-        elif chart_range == "monthly":
-            y, m = _resolve_selected_month_year(df, year=year, month=month)
-            _, last_d = calendar.monthrange(y, m)
-            for d in pd.date_range(
-                start=date(y, m, 1), end=date(y, m, last_d), freq="D"
-            ):
-                ts = pd.Timestamp(d).normalize()
-                day_data = filtered[filtered["DATE"].dt.normalize() == ts]
-                labels.append(_label_d_mmm_yy(ts))
+        elif chart_range == "monthly" or chart_range == "daily":
+            for d in pd.date_range(start=start_ts, end=end_ts, freq="D"):
+                day_ts = pd.Timestamp(d).normalize()
+                day_data = df[df["DATE_NORM"] == day_ts]
+                labels.append(_label_d_mmm_yy(day_ts))
                 series.append(calculate_recycling_percent(day_data))
-            date_from = date(y, m, 1).isoformat()
-            date_to = date(y, m, last_d).isoformat()
+            date_from = start_ts.date().isoformat()
+            date_to = end_ts.date().isoformat()
 
         elif chart_range == "yearly":
-            y = _resolve_selected_year(df, year=year)
+            y = start_ts.year
+            df["YEAR"] = df["DATE"].dt.year
+            df["MONTH"] = df["DATE"].dt.month
             for m in range(1, 13):
-                month_data = filtered[
-                    (filtered["DATE"].dt.year == y) & (filtered["DATE"].dt.month == m)
-                ]
+                month_data = df[(df["YEAR"] == y) & (df["MONTH"] == m)]
                 labels.append(_label_mmm_yy(pd.Timestamp(date(y, m, 1))))
                 series.append(calculate_recycling_percent(month_data))
             date_from = date(y, 1, 1).isoformat()
             date_to = date(y, 12, 31).isoformat()
-
-        elif chart_range == "daily":
-            y, m = _resolve_selected_month_year(df, year=year, month=month)
-            _, last_d = calendar.monthrange(y, m)
-            for d in pd.date_range(
-                start=date(y, m, 1), end=date(y, m, last_d), freq="D"
-            ):
-                ts = pd.Timestamp(d).normalize()
-                day_data = filtered[filtered["DATE"].dt.normalize() == ts]
-                labels.append(_label_d_mmm_yy(ts))
-                series.append(calculate_recycling_percent(day_data))
-            date_from = date(y, m, 1).isoformat()
-            date_to = date(y, m, last_d).isoformat()
-
-        else:
-            raise HTTPException(status_code=400, detail="Invalid chart range")
 
         return {
             "status": "success",
