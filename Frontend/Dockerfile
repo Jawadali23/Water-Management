@@ -12,6 +12,7 @@ COPY components/ ./components/
 COPY services/ ./services/
 COPY state/ ./state/
 COPY utils/ ./utils/
+COPY views/ ./views/
 
 RUN sed -i "s|http://localhost:8000|${API_BASE_URL}|g" /usr/share/nginx/html/config.js \
     && nginx -t

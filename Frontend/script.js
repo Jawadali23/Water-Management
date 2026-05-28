@@ -1,7 +1,28 @@
-// â•â•â• INIT â•â•â•
+// ═══ DYNAMIC VIEW LOADER ═══
+async function loadView(elementId, filePath) {
+  try {
+    const response = await fetch(filePath);
+    if (!response.ok) {
+      throw new Error(`Failed to load ${filePath}: ${response.statusText}`);
+    }
+    const html = await response.text();
+    const element = document.getElementById(elementId);
+    if (element) {
+      element.innerHTML = html;
+    }
+  } catch (error) {
+    console.error(`Error loading view ${elementId}:`, error);
+    const element = document.getElementById(elementId);
+    if (element) {
+      element.innerHTML = `<div style="padding: 20px; color: #dc2626; font-weight: 600; text-align: center;">Error loading view. Please verify your web server is running.</div>`;
+    }
+  }
+}
+
+// ═══ INIT ═══
 window.addEventListener('resize',()=>{Object.values(charts).forEach(c=>{try{c.resize();}catch(e){}});});
 
-function init(){
+async function init(){
   // Init filter states
   fs['rc1']={p:'monthly',w:'',mo:'',yr:''};
   fs['rc2']={p:'monthly',w:'',mo:'',yr:''};
@@ -18,7 +39,20 @@ function init(){
     return;
   }
 
+  // Load the separate HTML views dynamically
+  await Promise.all([
+    loadView('view-dpl1', 'views/dpl1.html'),
+    loadView('view-dpl2', 'views/dpl2.html'),
+    loadView('view-uril', 'views/uril.html'),
+    loadView('view-review', 'views/review.html')
+  ]);
+
   try{
+    // Initialize tooltip and interaction listeners for DPL 1 flow map
+    if (typeof initDpl1FlowMap === 'function') {
+      initDpl1FlowMap();
+    }
+
     renderLive(false);
     startLive();
     if(document.querySelector('.view.active')?.id==='view-dpl1'){renderDpl1Loading();}

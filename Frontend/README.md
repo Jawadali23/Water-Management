@@ -23,7 +23,7 @@ docker build -t wms-frontend .
 Run it locally:
 
 ```bash
-docker run --rm -p 8080:80 wms-frontend
+docker run --rm -p 8081:80 wms-frontend
 ```
 
 Open:

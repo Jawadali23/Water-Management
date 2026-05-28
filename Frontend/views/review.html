@@ -1,0 +1,36 @@
+          <div class="rev-top-bar">
+            <div class="rev-plant-selector">
+              <button class="rev-plant-btn active" id="rev-btn-dpl1" onclick="setRevPlant('dpl1',this)">
+                <div class="rev-plant-ico">&#128167;</div>
+                <div>
+                  <div class="rev-plant-name">DPL 1</div>
+                  <div class="rev-plant-sub">Plant Summary</div>
+                </div>
+              </button>
+            </div>
+            <div class="rev-controls">
+              <div class="rev-year-wrap"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#1558b0"
+                  stroke-width="2" stroke-linecap="round">
+                  <rect x="3" y="4" width="18" height="18" rx="2" />
+                  <line x1="16" y1="2" x2="16" y2="6" />
+                  <line x1="8" y1="2" x2="8" y2="6" />
+                  <line x1="3" y1="10" x2="21" y2="10" />
+                </svg><select id="rev-year-sel" class="rev-year-select" onchange="setRevYear(this.value)">
+                  <option value="2019">2019</option>
+                  <option value="2020">2020</option>
+                  <option value="2021">2021</option>
+                  <option value="2022">2022</option>
+                  <option value="2023">2023</option>
+                  <option value="2024">2024</option>
+                  <option value="2025">2025</option>
+                  <option value="2026">2026</option>
+                </select></div>
+              <button class="rev-download-btn" onclick="downloadRevPdf()"><svg width="13" height="13"
+                  viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="7 10 12 15 17 10" />
+                  <line x1="12" y1="15" x2="12" y2="3" />
+                </svg>Download PDF</button>
+            </div>
+          </div>
+          <div id="rev-content"></div>
