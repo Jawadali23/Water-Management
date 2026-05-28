@@ -50,12 +50,15 @@ def calculate_discharge(df):
 
 
 def calculate_recycle_volume(df):
-    return round(fetch_meter_total(df, METERS["wwtp_ro_in"]), 2)
+    return round(fetch_meter_total(df, METERS["wwtp_ro_in"]) 
+        -fetch_meter_total(df, METERS["wwtp_ro_rejection"]), 
+        2,
+    )
 
 
 
 def calculate_recycling_percent(df):
-    wastewater_in = fetch_meter_total(df, METERS["wwtp_in"])
+    wastewater_in = calculate_withdrawal(df)
     recovered = calculate_recycle_volume(df)
 
     if wastewater_in <= 0:
