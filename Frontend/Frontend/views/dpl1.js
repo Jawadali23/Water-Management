@@ -142,3 +142,55 @@ function initDpl1FlowMap() {
     if (e.key === 'Escape') { hideTooltip(true); tooltip.dataset.currentMeter = ''; }
   });
 }
+
+function initDpl1LayoutFrame() {
+  var view = document.getElementById('view-dpl1') || document.body;
+  var card = view.querySelector('.dpl1-layout-card');
+  if (!card) {
+    card = document.createElement('div');
+    card.className = 'rc-card dpl1-layout-card';
+    card.innerHTML = '<div class="rc-hdr"><div class="rc-left dpl1-layout-title-wrap"><div class="rc-ico dpl1-layout-symbol" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.15" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20h18"/><path d="M5 20V9l5 3V8l5 4V6l4 3v11"/><path d="M8 16h2M13 16h2M18 16h1"/><path d="M7 5.5C7 3.9 8.4 3 9.7 3h4.6C15.6 3 17 3.9 17 5.5"/><path d="M12 12.5s-2.2 2.3-2.2 4a2.2 2.2 0 0 0 4.4 0c0-1.7-2.2-4-2.2-4z"/></svg></div><div><div class="rc-title">DPL 1 Water Flow Layout</div></div></div><a class="dpl1-open-layout-btn" href="views/dpl1-layout.html?v=20260603-full-fit" target="_blank" rel="noopener" aria-label="Open DPL 1 layout in new page">Open Layout <span aria-hidden="true">↗</span></a></div>' +
+      '<iframe class="dpl1-layout-frame" src="views/dpl1-layout.html?v=20260603-full-fit" data-alt-src="dpl1-layout.html?v=20260603-full-fit" title="DPL 1 Water Flow Layout"></iframe>' +
+      '<div class="dpl1-layout-fallback"><a href="views/dpl1-layout.html" target="_blank" rel="noopener">Open DPL-1 layout</a></div>';
+    view.appendChild(card);
+  }
+  card.style.display = 'block';
+  var frame = card.querySelector('.dpl1-layout-frame');
+  if (!frame || frame.dataset.layoutInit === '1') return;
+  frame.dataset.layoutInit = '1';
+  frame.addEventListener('error', function () {
+    var alt = frame.getAttribute('data-alt-src');
+    if (alt && frame.getAttribute('src') !== alt) frame.setAttribute('src', alt);
+  });
+  function syncLayoutHeight() {
+    try {
+      var doc = frame.contentDocument || (frame.contentWindow && frame.contentWindow.document);
+      if (!doc || !doc.body) return;
+      var canvasWrap = doc.querySelector('.canvas-wrap');
+      var controls = doc.querySelector('.controls');
+      var contentHeight = Math.ceil(
+        (canvasWrap ? canvasWrap.getBoundingClientRect().height : doc.body.scrollHeight) +
+        (controls ? controls.getBoundingClientRect().height + 28 : 34)
+      );
+      if (contentHeight > 360) frame.style.height = Math.min(Math.max(contentHeight, 700), 820) + 'px';
+    } catch (e) {
+      /* Same-origin iframe is expected; fixed CSS height is the fallback. */
+    }
+  }
+  frame.addEventListener('load', function () {
+    syncLayoutHeight();
+    setTimeout(syncLayoutHeight, 180);
+    setTimeout(syncLayoutHeight, 600);
+  });
+  window.addEventListener('resize', syncLayoutHeight);
+  setTimeout(function () {
+    try {
+      var doc = frame.contentDocument || (frame.contentWindow && frame.contentWindow.document);
+      var empty = !doc || !doc.body || !doc.body.children.length;
+      if (empty && frame.getAttribute('data-alt-src')) frame.setAttribute('src', frame.getAttribute('data-alt-src'));
+      else syncLayoutHeight();
+    } catch (e) {
+      /* Cross-origin is not expected here; leave the iframe visible if browser blocks inspection. */
+    }
+  }, 900);
+}

@@ -12,6 +12,7 @@ const now=new Date(),cm=Math.min(now.getMonth(),11),frac=now.getDate()/new Date(
 let activePeriod='td';
 let bccMeter='all',bccMeter2='all',bccMeterU='all';
 let fccFactory='all',ovRcFactory='all';
+let wrMode='all';
 let globalFilter={from:null,to:null};
 const charts={};
 const liveR={wpu:12.5,dpu:3.8,wpu2:10.2,dpu2:3.1,wpuU:4.2,dpuU:1.1};

@@ -119,17 +119,21 @@ function normalizeSeries(payload) {
 function seriesColor(label, index) {
   const k = normalizeKey(label);
   if (k.includes('freshwater') || k.includes('tank') || k.includes('intake') || k.includes('waterin')) return '#1558b0';
-  if (k.includes('withdraw') || k.includes('pump')) return '#7c3aed';
+  if (k.includes('withdraw') || k.includes('pump')) return '#1558b0';
+  if (k.includes('recyclerate') || k.includes('recyclingrate')) return '#10b981';
   if (k.includes('recycle') || k.includes('recircul')) return '#6ee7b7';
   if (k.includes('discharge') || k.includes('out')) return '#f59e0b';
   return ['#1558b0', '#7c3aed', '#6ee7b7', '#f59e0b'][index % 4];
 }
 function prettyMetricLabel(label) {
+  const raw = normalizeKey(label);
+  if (raw.includes('withdrawalunit')) return 'Withdrawal / Unit';
+  if (raw.includes('dischargeunit')) return 'Discharge / Unit';
   const key = resolveMetricKey(label);
   if (key === 'freshWaterTank') return 'Fresh Water Tank';
-  if (key === 'withdraw') return 'Withdraw';
+  if (key === 'withdraw') return 'Withdrawal / Unit';
   if (key === 'recycle') return 'Recycle';
-  if (key === 'discharge') return 'Discharge';
+  if (key === 'discharge') return 'Discharge / Unit';
   if (key === 'recycleRate') return 'Recycle Rate';
   return String(label || 'Series');
 }
@@ -153,7 +157,7 @@ function buildDpl1CardsUrl() {
 }
 function renderDpl1Loading(message = 'Loading live DPL 1 data...') {
   const el = document.getElementById('dpl1-kpi'); if (!el) return;
-  el.innerHTML = `<div class="kpi-card" style="grid-column:1/-1;min-height:150px;display:flex;align-items:center;justify-content:center;text-align:center"><div><div class="kpi-lbl" style="margin-bottom:8px">${message}</div><div class="kpi-period">${getDpl1RangeParams().label}</div></div></div>`;
+  el.innerHTML = `<div class="kpi-card" style="grid-column:1/-1;min-height:150px;display:flex;align-items:center;justify-content:center;text-align:center"><div><div class="kpi-lbl" style="margin-bottom:8px">${message}</div></div></div>`;
 }
 function getCardsContainer(payload) {
   if (!payload || typeof payload !== 'object') return null;
@@ -188,7 +192,10 @@ function getDpl1CardValue(metric) {
     withdraw: ['water_withdrawal', 'withdraw', 'water withdrawal', 'waterout', 'waterOut', 'out'],
     recycle: ['recycle_volume', 'recycle', 'recycle volume', 'recycled'],
     discharge: ['factory_discharge', 'discharge', 'factory discharge', 'wwtpOut', 'reject'],
-    recycleRate: ['recycling_percent', 'recycleRate', 'recyclingRate', 'recycling percentage', 'recyclingpercent', 'recycleratio', 'rate']
+    recycleRate: ['recycling_percent', 'recycleRate', 'recyclingRate', 'recycling percentage', 'recyclingpercent', 'recycleratio', 'rate'],
+    production: ['production', 'production_volume', 'production count', 'units', 'unit', 'output'],
+    domesticRecycle: ['domestic_recycle', 'domestic', 'domestic recycled', 'domestic recycling'],
+    processRecycle: ['process_recycle', 'process', 'process recycled', 'process recycling']
   };
   const keys = aliases[metric] || [metric];
   const exact = findCardValue(source, keys);
@@ -197,17 +204,15 @@ function getDpl1CardValue(metric) {
 }
 function renderDpl1Cards() {
   const el = document.getElementById('dpl1-kpi'); if (!el) return;
-  if (!dpl1Api.rawCards && !dpl1Api.cards) {
-    // Fall back to the local dataset when the API is unavailable.
-    renderKPIsFor('dpl1-kpi', monthly);
-    return;
-  }
   const cardData = {
     freshWaterTank: getDpl1CardValue('freshWaterTank'),
     withdraw: getDpl1CardValue('withdraw'),
     recycle: getDpl1CardValue('recycle'),
     discharge: getDpl1CardValue('discharge'),
-    recycleRate: getDpl1CardValue('recycleRate')
+    recycleRate: getDpl1CardValue('recycleRate'),
+    production: getDpl1CardValue('production'),
+    domesticRecycle: getDpl1CardValue('domesticRecycle'),
+    processRecycle: getDpl1CardValue('processRecycle')
   };
   const local = { freshWaterTank: monthly.freshWaterTank, withdraw: monthly.withdraw, recycle: monthly.recycle, discharge: monthly.discharge };
   const recycleRate = cardData.recycleRate != null ? cardData.recycleRate : (cardData.freshWaterTank && cardData.recycle != null && cardData.freshWaterTank > 0 ? (cardData.recycle / cardData.freshWaterTank) * 100 : 0);
@@ -215,56 +220,91 @@ function renderDpl1Cards() {
     freshWaterTank: cardData.freshWaterTank != null ? cardData.freshWaterTank : getVal(local.freshWaterTank),
     withdraw: cardData.withdraw != null ? cardData.withdraw : getVal(local.withdraw),
     recycle: cardData.recycle != null ? cardData.recycle : getVal(local.recycle),
-    discharge: cardData.discharge != null ? cardData.discharge : getVal(local.discharge)
+    discharge: cardData.discharge != null ? cardData.discharge : getVal(local.discharge),
+    production: cardData.production != null ? cardData.production : Math.round(getVal(local.withdraw) * 82)
   };
-  const periodLabel = getDpl1RangeParams().label;
-  const trendFor = (arr) => {
-    const curr = arr[cm], prev = arr[Math.max(cm - 1, 0)], diff = curr - prev;
-    const tc = diff > 0 ? 'up' : diff < 0 ? 'dn' : 'neu';
-    const ts = diff > 0 ? `&#9650; +${fmt(diff)}` : diff < 0 ? `&#9660; ${fmt(Math.abs(diff))}` : '&ndash;';
-    return { tc, ts };
-  };
-  const kpis = [
-    { key: 'freshWaterTank', icon: '&#128167;', tag: 'Intake', label: 'Fresh Water Tank', unit: 'm&#179;', line: '#38b6ff', arr: local.freshWaterTank },
-    { key: 'withdraw', icon: '&#128260;', tag: 'Pumped out', label: 'Withdraw', unit: 'm&#179;', line: '#a78bfa', arr: local.withdraw },
-    { key: 'recycle', icon: '&#9851;&#65039;', tag: 'Recovered', label: 'Recycle', unit: 'm&#179;', line: '#6ee7b7', arr: local.recycle },
-    { key: 'discharge', icon: '&#11015;&#65039;', tag: 'WWTP out', label: 'Discharge', unit: 'm&#179;', line: '#fbbf24', arr: local.discharge }
-  ].map(m => {
-    const tr = trendFor(m.arr);
-    return `<div class="kpi-card" style="--kline:${m.line}"><div class="kpi-top"><div class="kpi-icon">${m.icon}</div><span class="kpi-badge">${m.tag}</span></div><div class="kpi-lbl">${m.label}</div><div class="kpi-val">${fmtExact(vals[m.key])}<span class="kpi-unit">${m.unit}</span></div>${sparkline(m.arr, m.line)}<div class="kpi-sep"></div><div class="kpi-foot"><span class="kpi-trend ${tr.tc}">${tr.ts}</span><span class="kpi-period">${periodLabel}</span></div></div>`;
-  });
   const rcCurr = recycleRate || 0;
-  const fallbackRcDiff = ((local.recycle[cm] / Math.max(local.freshWaterTank[cm], 1)) * 100) - ((local.recycle[Math.max(cm - 1, 0)] / Math.max(local.freshWaterTank[Math.max(cm - 1, 0)], 1)) * 100);
-  const rcDiff = cardData.recycleRate != null ? 0 : fallbackRcDiff;
-  const rcTrend = rcDiff > 0 ? 'up' : rcDiff < 0 ? 'dn' : 'neu';
-  const rcText = rcDiff > 0 ? `&#9650; +${Math.abs(rcDiff).toFixed(1)}%` : rcDiff < 0 ? `&#9660; ${Math.abs(rcDiff).toFixed(1)}%` : '&ndash;';
-  el.innerHTML = kpis.join('') + `<div class="kpi-card" style="--kline:#34d399"><div class="kpi-top"><div class="kpi-icon">&#128202;</div><span class="kpi-badge">Rate</span></div><div class="kpi-lbl">Recycle Rate</div><div class="kpi-val">${fmtExact(rcCurr)}<span class="kpi-unit">%</span></div><div class="kpi-sep"></div><div class="kpi-foot"><span class="kpi-trend ${rcTrend}">${rcText}</span><span class="kpi-period">${periodLabel}</span></div></div>`;
+  const domesticAbs = cardData.domesticRecycle != null ? cardData.domesticRecycle : Math.round(vals.recycle * 0.5);
+  const processAbs = cardData.processRecycle != null ? cardData.processRecycle : Math.max(0, vals.recycle - domesticAbs);
+  const processPct = 0;
+  const domesticPct = 0;
+  const withdrawalPerUnit = vals.production > 0 ? (vals.withdraw / vals.production).toFixed(3) : fmtExact(vals.withdraw);
+  const dischargePerUnit = vals.production > 0 ? (vals.discharge / vals.production).toFixed(3) : fmtExact(vals.discharge);
+  const unit = '<span class="kpi-unit">m&#179;</span>';
+  const icons = {
+    withdrawal: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.15" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.8S6.2 9 6.2 13.8a5.8 5.8 0 0 0 11.6 0C17.8 9 12 2.8 12 2.8z"/><path d="M9.3 14.1c.8 1.4 2.2 2 3.9 1.6"/></svg>',
+    recycle: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.15" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7.5A6.5 6.5 0 0 1 18.2 10"/><path d="m18.5 5.6-.3 4.4-4.2-.9"/><path d="M17 16.5A6.5 6.5 0 0 1 5.8 14"/><path d="m5.5 18.4.3-4.4 4.2.9"/></svg>',
+    production: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.15" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5z"/><path d="M4 12h3M17 12h3M12 4v3M12 17v3"/><path d="m6.5 6.5 2 2M15.5 15.5l2 2"/></svg>',
+    discharge: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.15" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h11a3 3 0 0 1 3 3v1"/><path d="M4 11h9a3 3 0 0 1 3 3v1"/><path d="M18 14v6"/><path d="m15 17 3 3 3-3"/><path d="M4 15h7"/></svg>'
+  };
+  const targetMark = (value, target, unitText, higherIsGood = false) => {
+    if (target == null || value == null || value === '') return '';
+    const current = parseFloat(String(value).replace(/,/g, ''));
+    if (!Number.isFinite(current)) return '';
+    const isAboveTarget = current > target;
+    const isGood = higherIsGood ? current >= target : current <= target;
+    const dir = isAboveTarget ? 'up' : 'down';
+    const tone = isGood ? 'good' : 'bad';
+    const targetText = Number(target).toFixed(unitText === '%' ? 0 : 3) + (unitText === '%' ? '%' : '');
+    return `<span class="overview-target-trend ${tone} ${dir}"><span></span></span>|||<span class="dpl1-kpi-target-label">Target</span><strong>${targetText}</strong>`;
+  };
+  const card = (line, icon, title, tag, value, unitText, subs, extraClass = '', targetHtml = '') => {
+    const tagHtml = tag ? `<span class="kpi-badge">${tag}</span>` : '<span></span>';
+    const meter = Math.max(12, Math.min(100, parseFloat(value) ? Math.round(parseFloat(value) * (unitText === '%' ? 1 : 120)) : 62));
+    const targetParts = targetHtml ? String(targetHtml).split('|||') : [];
+    const targetArrow = targetParts[0] || '';
+    const targetCopy = targetParts[1] || '';
+    const unitSpan = unitText ? `<span class="kpi-unit">${unitText}</span>` : '';
+    const targetValueHtml = targetHtml
+      ? `<div class="dpl1-kpi-value-wrap"><div class="dpl1-kpi-value-line">${targetArrow}<div class="dpl1-kpi-value">${value}${unitSpan}</div></div></div>`
+      : `<div class="dpl1-kpi-value">${value}${unitSpan}</div>`;
+    return `<div class="kpi-card dpl1-kpi-main ${extraClass}" style="--kline:${line};--meter:${meter}%">
+      <div class="dpl1-kpi-bgmark">${icon}</div>
+      <div class="dpl1-kpi-card-head">
+        <div class="dpl1-kpi-title-wrap"><div class="kpi-icon dpl1-kpi-icon">${icon}</div><div class="dpl1-kpi-title">${title}</div></div>
+        ${targetCopy ? `<div class="dpl1-kpi-target-copy">${targetCopy}</div>` : tagHtml}
+      </div>
+      ${targetValueHtml}
+      <div class="dpl1-kpi-meter"><span></span></div>
+      ${subs || ''}
+    </div>`;
+  };
+  const sub = (label, value, unitHtml = unit, tone = '') => `<div class="dpl1-kpi-sub ${tone}"><div class="dpl1-kpi-sub-label">${label}</div><div class="dpl1-kpi-sub-value">${value}${unitHtml}</div></div>`;
+  el.innerHTML = [
+    card('#38b6ff', icons.withdrawal, 'Withdrawal per Unit', 'Intake', withdrawalPerUnit, 'm&#179;/Unit', `<div class="dpl1-kpi-subgrid">${sub('Absolute', fmtExact(vals.withdraw))}</div>`, 'withdraw-card', targetMark(withdrawalPerUnit, .036, 'm&#179;/Unit')),
+    card('#22c55e', icons.recycle, 'Recycle Rate', 'Recycle Rate', fmtExact(rcCurr), '%', `<div class="dpl1-kpi-subgrid two">${sub('Process', processPct.toFixed(1), '<span class="kpi-unit">%</span>', 'process')}${sub('Domestic', domesticPct.toFixed(1), '<span class="kpi-unit">%</span>', 'domestic')}</div><div class="dpl1-kpi-subgrid" style="margin-top:8px">${sub('Absolute Recycled Water', fmtExact(vals.recycle))}</div>`, 'rate-card recycle-card', targetMark(fmtExact(rcCurr), 41, '%', true)),
+    card('#f97316', icons.discharge, 'Discharge per Unit', 'WWTP Out', dischargePerUnit, 'm&#179;/Unit', `<div class="dpl1-kpi-subgrid">${sub('Absolute', fmtExact(vals.discharge))}</div>`, 'discharge-card', targetMark(dischargePerUnit, .035, 'm&#179;/Unit')),
+    card('#a78bfa', icons.production, 'Production', '', fmt(vals.production), 'Unit', '', 'production-card')
+  ].join('');
 }
 function renderDpl1View() {
   renderDpl1Cards();
   renderBccChart();
   renderRcChart();
+  renderWaterRecycleChart();
+  if (typeof initDpl1LayoutFrame === 'function') initDpl1LayoutFrame();
 }
 function applyDpl1ApiDefaults() {
   if (dpl1Api.defaultsApplied) return;
-  const cfg = [['bcc', true], ['rc1', true]];
-  cfg.forEach(([id]) => {
+  dpl1Api.defaultsApplied = true;
+  const cfg = [['bcc', 'daily'], ['rc1', 'monthly'], ['wr1', 'monthly']];
+  cfg.forEach(([id, mode]) => {
     const p = document.getElementById(id + '-period');
     const w = document.getElementById(id + '-week');
-    if (p) p.value = 'weekly';
-    if (w && !w.value) w.value = '1';
-    fs[id] = { p: 'weekly', w: w?.value || '1', mo: '', yr: '' };
+    if (p) p.value = mode;
+    if (w) w.style.display = 'none';
+    fs[id] = { p: mode, w: '', mo: '', yr: '' };
     handleDS(id);
   });
-  dpl1Api.defaultsApplied = true;
 }
 async function fetchJson(url) {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Request failed (${res.status}) for ${url}`);
   return res.json();
 }
-async function loadDpl1ApiData() {
-  const key = buildDpl1CardsUrl();
+async function loadDpl1ApiData(options = {}) {
+  const cardsOnly = !!options.cardsOnly;
+  const key = buildDpl1CardsUrl() + (cardsOnly ? '&scope=cards' : '');
   if (dpl1Api.loading && dpl1Api.loadingKey === key) return dpl1Api.loading;
   dpl1Api.loadingKey = key;
   const seq = ++dpl1Api.requestSeq;
@@ -272,6 +312,14 @@ async function loadDpl1ApiData() {
     try {
       dpl1Api.cards = null;
       dpl1Api.rawCards = null;
+      if (cardsOnly) {
+        const cards = await fetchJson(buildDpl1CardsUrl());
+        if (seq !== dpl1Api.requestSeq) return null;
+        dpl1Api.rawCards = cards;
+        dpl1Api.cards = normalizeCardsPayload(cards);
+        dpl1Api.error = '';
+        return dpl1Api;
+      }
       const getChartParams = (id) => {
         const f = fs[id] || {};
         const p = f.p || 'weekly';
@@ -282,6 +330,7 @@ async function loadDpl1ApiData() {
         if (p === 'daily') chartRange = 'hourly';
         else if (p === 'weekly') chartRange = 'daily';
         else if (p === 'monthly') chartRange = 'monthly';
+        else if (p === 'all') chartRange = 'yearly';
         else chartRange = 'yearly';
         return { chartRange, yr, mo, d };
       };

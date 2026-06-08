@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <title>Water Management System – Dawlance</title>
+  <!-- CONNECT TO CSS FILE -->
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Rajdhani:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+    rel="stylesheet">
+  <script>
+    window.__assetVersion = Date.now().toString();
+
+    function loadFreshStyle(href) {
+      var link = document.createElement('link');
+      link.rel = 'stylesheet';
+      link.href = href + '?v=' + window.__assetVersion;
+      document.head.appendChild(link);
+    }
+
+    loadFreshStyle('styles.css');
+  </script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+</head>
+
+<body>
+  <div class="app">
+    <!-- ═══ SIDEBAR ═══ -->
+    <div class="sb">
+      <div class="sb-head">
+        <div class="sb-logo-row">
+          <!-- NEW RED LOGO URL INSERTED HERE -->
+          <div class="sb-logo-icon">
+            <img src="images.png" alt="Dawlance Logo">
+          </div>
+          <span class="sb-logo-txt">DAWLANCE</span>
+        </div>
+      </div>
+      <div class="sb-nav">
+        <div class="nav-item active" id="nav-overview" onclick="switchView('overview',this)">
+          <div class="nav-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"
+              stroke-linejoin="round">
+              <rect x="3" y="4" width="7" height="7" rx="1.2" />
+              <rect x="14" y="4" width="7" height="7" rx="1.2" />
+              <rect x="3" y="15" width="7" height="5" rx="1.2" />
+              <rect x="14" y="15" width="7" height="5" rx="1.2" />
+            </svg>
+          </div>
+          <span class="nav-name">Overview</span>
+        </div>
+        <div class="nav-item" id="nav-dpl1" onclick="switchView('dpl1',this)">
+          <div class="nav-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"
+              stroke-linejoin="round">
+              <path d="M3 21h18" />
+              <path d="M4 21V10l5 3V9l5 4V8l6 4v9" />
+              <path d="M7 17h2" />
+              <path d="M12 17h2" />
+              <path d="M17 17h1" />
+              <path d="M9 21v-4h6v4" />
+            </svg>
+          </div>
+          <span class="nav-name">DPL 1</span>
+        </div>
+        <div class="nav-item" id="nav-dpl2" onclick="switchView('dpl2',this)">
+          <div class="nav-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"
+              stroke-linejoin="round">
+              <path d="M3 21h18" />
+              <path d="M5 21V7h4v14" />
+              <path d="M10 21V4h4v17" />
+              <path d="M15 21v-9h4v9" />
+              <path d="M7 10h.01M12 8h.01M17 15h.01" />
+            </svg>
+          </div>
+          <span class="nav-name">DPL 2</span>
+        </div>
+        <div class="nav-item" id="nav-uril" onclick="switchView('uril',this)">
+          <div class="nav-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"
+              stroke-linejoin="round">
+              <path d="M3 21h18" />
+              <path d="M4 21V9l8-5 8 5v12" />
+              <path d="M7 21v-7h10v7" />
+              <path d="M7 11h10" />
+              <path d="M10 14v7" />
+              <path d="M14 14v7" />
+            </svg>
+          </div>
+          <span class="nav-name">URIL</span>
+        </div>
+        <div class="nav-item" id="nav-review" onclick="switchView('review',this)">
+          <div class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1"
+              stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9 3h6l1 2h3v16H5V5h3l1-2z" />
+              <path d="M9 12l2 2 4-5" />
+              <path d="M8 18h8" />
+            </svg></div>
+          <span class="nav-name">Review</span>
+        </div>
+      </div>
+      <div class="sb-foot">
+        <div class="sb-online">
+          <div class="pulse"></div>
+          <div class="sb-online-txt"><strong>System Online</strong><span>All meters reporting</span></div>
+        </div>
+      </div>
+    </div>
+    <!-- ═══ MAIN ═══ -->
+    <div class="main-wrap">
+      <div class="topbar">
+        <button class="sb-toggle" onclick="toggleSidebar()">&#9776;</button>
+        <div class="tb-page-title" id="page-title">Overview</div>
+        <div class="tb-wms">Water Management System</div>
+        <div class="tb-spacer"></div>
+        <div class="period-grp">
+          <button class="pbtn active" onclick="setPeriod('td',this)">Till Today</button>
+          <button class="pbtn" onclick="setPeriod('mtd',this)">MTD</button>
+          <button class="pbtn" onclick="setPeriod('ytd',this)">YTD</button>
+        </div>
+
+      </div>
+      <div class="content">
+        <div class="global-filter" id="global-filter">
+          <div class="gf-range">
+            <div class="gf-field">
+              <label class="gf-label">From</label>
+              <input class="gf-input" id="from-date" type="date">
+            </div>
+            <div class="gf-field">
+              <label class="gf-label">To</label>
+              <input class="gf-input" id="to-date" type="date">
+            </div>
+            <button class="gf-btn" onclick="applyGlobalFilter()">Apply</button>
+            <button class="gf-btn reset" onclick="resetGlobalFilter()">Reset</button>
+          </div>
+
+          <div class="manual-meter-container manual-excel-panel">
+            <div class="manual-excel-body">
+              <div class="manual-excel-actions">
+                <button id="openExcelBtn" class="manual-btn">📄 Open Excel file</button>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- ══ DPL 1 ══ -->
+        <div class="view active" id="view-overview">
+          <section class="overview-page">
+            <div class="overview-hero">
+              <div>
+                <div class="overview-title">Plant Water Performance</div>
+              </div>
+            </div>
+
+            <div class="overview-factory-grid">
+              <article class="overview-factory-card plant-dpl1 is-clickable" style="--fc:#38b6ff" onclick="switchView('dpl1',document.getElementById('nav-dpl1'))" role="button" tabindex="0" data-target-view="dpl1">
+                <div class="overview-factory-top">
+                  <div class="overview-factory-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18"/><path d="M5 21V10l5 3V9l5 4V7l4 3v11"/><path d="M9 21v-4h6v4"/><path d="M7 15h.01M12 15h.01M17 15h.01"/></svg>
+                  </div>
+                  <div>
+                    <div class="overview-factory-name">DPL 1</div>
+                    <div class="overview-factory-meta" id="ov-period-dpl1">Till Today</div>
+                  </div>
+                </div>
+                <div class="overview-mini-grid">
+                  <div class="overview-mini-card">
+                    <div class="overview-mini-label">Withdrawal per Unit</div>
+                    <div class="overview-mini-value"><span id="ov-dpl1-wpu">0.00</span><small>m&#179;/Unit</small></div>
+                  </div>
+                  <div class="overview-mini-card recycle">
+                    <div class="overview-mini-label">Recycle Rate</div>
+                    <div class="overview-mini-value"><span id="ov-dpl1-rpu">0.00</span><small>%</small></div>
+                  </div>
+                </div>
+              </article>
+
+              <article class="overview-factory-card plant-dpl2 is-clickable" style="--fc:#7c3aed" onclick="switchView('dpl2',document.getElementById('nav-dpl2'))" role="button" tabindex="0" data-target-view="dpl2">
+                <div class="overview-factory-top">
+                  <div class="overview-factory-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18"/><path d="M5 21V10l5 3V9l5 4V7l4 3v11"/><path d="M9 21v-4h6v4"/><path d="M7 15h.01M12 15h.01M17 15h.01"/></svg>
+                  </div>
+                  <div>
+                    <div class="overview-factory-name">DPL 2</div>
+                    <div class="overview-factory-meta" id="ov-period-dpl2">Till Today</div>
+                  </div>
+                </div>
+                <div class="overview-mini-grid">
+                  <div class="overview-mini-card">
+                    <div class="overview-mini-label">Withdrawal per Unit</div>
+                    <div class="overview-mini-value"><span id="ov-dpl2-wpu">0.00</span><small>m&#179;/Unit</small></div>
+                  </div>
+                  <div class="overview-mini-card recycle">
+                    <div class="overview-mini-label">Recycle Rate</div>
+                    <div class="overview-mini-value"><span id="ov-dpl2-rpu">0.00</span><small>%</small></div>
+                  </div>
+                </div>
+              </article>
+
+              <article class="overview-factory-card plant-uril is-clickable" style="--fc:#10b981" onclick="switchView('uril',document.getElementById('nav-uril'))" role="button" tabindex="0" data-target-view="uril">
+                <div class="overview-factory-top">
+                  <div class="overview-factory-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18"/><path d="M5 21V10l5 3V9l5 4V7l4 3v11"/><path d="M9 21v-4h6v4"/><path d="M7 15h.01M12 15h.01M17 15h.01"/></svg>
+                  </div>
+                  <div>
+                    <div class="overview-factory-name">URIL</div>
+                    <div class="overview-factory-meta" id="ov-period-uril">Till Today</div>
+                  </div>
+                </div>
+                <div class="overview-mini-grid">
+                  <div class="overview-mini-card">
+                    <div class="overview-mini-label">Withdrawal per Unit</div>
+                    <div class="overview-mini-value"><span id="ov-uril-wpu">0.00</span><small>m&#179;/Unit</small></div>
+                  </div>
+                  <div class="overview-mini-card recycle">
+                    <div class="overview-mini-label">Recycle Rate</div>
+                    <div class="overview-mini-value"><span id="ov-uril-rpu">0.00</span><small>%</small></div>
+                  </div>
+                </div>
+              </article>
+            </div>
+          </section>
+        </div>
+
+        <div class="view" id="view-dpl1"></div>
+
+        <!-- ══ DPL 2 ══ -->
+        <div class="view" id="view-dpl2"></div>
+
+        <!-- ══ URIL ══ -->
+        <div class="view" id="view-uril"></div>
+
+        <!-- ══ REVIEW ══ -->
+        <div class="view" id="view-review"></div>
+      </div>
+    </div>
+  </div>
+  <script>
+    (function loadFreshScripts() {
+      var scripts = [
+        'config.js',
+        'state/data.js',
+        'utils/helpers.js',
+        'services/api.js',
+        'charts/renderers.js',
+        'components/ui.js',
+        'review_page.js',
+        'downloadpdf.js',
+        'manual_reading.js',
+        'views/dpl1.js',
+        'script.js'
+      ];
+
+      function loadNext(index) {
+        if (index >= scripts.length) return;
+
+        var script = document.createElement('script');
+        script.src = scripts[index] + '?v=' + window.__assetVersion;
+        script.onload = function () {
+          loadNext(index + 1);
+        };
+        script.onerror = function () {
+          console.error('Failed to load', scripts[index]);
+          loadNext(index + 1);
+        };
+        document.body.appendChild(script);
+      }
+
+      loadNext(0);
+    })();
+  </script>
+  <script>
+    (function autoReloadOnLocalChanges() {
+      if (!/^https?:$/.test(window.location.protocol)) return;
+
+      var files = [
+        'index.html',
+        'styles.css',
+        'config.js',
+        'state/data.js',
+        'utils/helpers.js',
+        'services/api.js',
+        'charts/renderers.js',
+        'components/ui.js',
+        'review_page.js',
+        'downloadpdf.js',
+        'manual_reading.js',
+        'views/dpl1.js',
+        'script.js'
+      ];
+      var snapshots = {};
+
+      function readFile(file) {
+        return fetch(file + '?watch=' + Date.now(), { cache: 'no-store' })
+          .then(function (response) {
+            if (!response.ok) throw new Error(file + ' ' + response.status);
+            return response.text();
+          });
+      }
+
+      Promise.all(files.map(function (file) {
+        return readFile(file).then(function (text) {
+          snapshots[file] = text;
+        }).catch(function () {});
+      })).then(function () {
+        function checkForChanges() {
+          files.forEach(function (file) {
+            readFile(file).then(function (text) {
+              if (snapshots[file] && snapshots[file] !== text) {
+                window.location.reload();
+                return;
+              }
+              snapshots[file] = text;
+            }).catch(function () {});
+          });
+        }
+
+        setInterval(checkForChanges, 1200);
+        window.addEventListener('focus', checkForChanges);
+        document.addEventListener('visibilitychange', function () {
+          if (!document.hidden) checkForChanges();
+        });
+      });
+    })();
+  </script>
+</body>
+</html>

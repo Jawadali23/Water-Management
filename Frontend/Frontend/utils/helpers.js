@@ -58,8 +58,9 @@ function resolveMetricKey(label){
   if(!k)return null;
   if(k.includes('freshwatertank')||k.includes('freshwater')||k.includes('waterin')||k==='fwt'||k.includes('intake'))return 'freshWaterTank';
   if(k.includes('withdraw')||k.includes('waterout')||k.includes('pumpout')||k==='wout')return 'withdraw';
+  if(k.includes('recyclerate')||k.includes('recyclingrate')||k.includes('recycleratio')||k.includes('recyclingpercentage')||k.includes('recyclingpercent'))return 'recycleRate';
   if(k.includes('recycle')||k.includes('recircul'))return 'recycle';
   if(k.includes('discharge')||k.includes('wastewater')||k.includes('wwtp')||k.includes('reject'))return 'discharge';
-  if(k.includes('recyclerate')||k.includes('recyclingrate')||k.includes('recycleratio')||k.includes('recyclingpercentage')||k.includes('recyclingpercent'))return 'recycleRate';
+  if(k.includes('production')||k.includes('unit')||k.includes('output')||k.includes('pu'))return 'production';
   return null;
 }

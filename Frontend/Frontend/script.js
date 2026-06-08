@@ -1,7 +1,8 @@
 // ═══ DYNAMIC VIEW LOADER ═══
 async function loadView(elementId, filePath) {
   try {
-    const response = await fetch(filePath);
+    const sep = filePath.includes('?') ? '&' : '?';
+    const response = await fetch(filePath + sep + 'v=' + Date.now(), { cache: 'no-store' });
     if (!response.ok) {
       throw new Error(`Failed to load ${filePath}: ${response.statusText}`);
     }
@@ -14,6 +15,7 @@ async function loadView(elementId, filePath) {
     console.error(`Error loading view ${elementId}:`, error);
     const element = document.getElementById(elementId);
     if (element) {
+      if (elementId === 'view-overview' && element.innerHTML.trim()) return;
       element.innerHTML = `<div style="padding: 20px; color: #dc2626; font-weight: 600; text-align: center;">Error loading view. Please verify your web server is running.</div>`;
     }
   }
@@ -25,6 +27,7 @@ window.addEventListener('resize',()=>{Object.values(charts).forEach(c=>{try{c.re
 async function init(){
   // Init filter states
   fs['rc1']={p:'monthly',w:'',mo:'',yr:''};
+  fs['wr1']={p:'monthly',w:'',mo:'',yr:''};
   fs['rc2']={p:'monthly',w:'',mo:'',yr:''};
   fs['rcU']={p:'monthly',w:'',mo:'',yr:''};
   fs['ovrc']={p:'monthly',w:'',mo:'',yr:''};
@@ -41,6 +44,7 @@ async function init(){
 
   // Load the separate HTML views dynamically
   await Promise.all([
+    loadView('view-overview', 'views/overview.html'),
     loadView('view-dpl1', 'views/dpl1.html'),
     loadView('view-dpl2', 'views/dpl2.html'),
     loadView('view-uril', 'views/uril.html'),
@@ -52,9 +56,13 @@ async function init(){
     if (typeof initDpl1FlowMap === 'function') {
       initDpl1FlowMap();
     }
+    if (typeof initDpl1LayoutFrame === 'function') {
+      initDpl1LayoutFrame();
+    }
 
     renderLive(false);
     startLive();
+    if(document.querySelector('.view.active')?.id==='view-overview' && typeof renderOverview === 'function') renderOverview();
     if(document.querySelector('.view.active')?.id==='view-dpl1'){renderDpl1Loading();}
     loadDpl1ApiData().then(()=>{if(document.querySelector('.view.active')?.id==='view-dpl1')renderDpl1View();});
     touch();
