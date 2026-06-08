@@ -116,32 +116,32 @@ def water_withdrawal(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/recycle-volume")
-def recycle_volume(
-    range: str = "td",
-    year: int | None = None,
-    date_from: str | None = None,
-    date_to: str | None = None,
-):
-    try:
-        current_df, bounds = _load_scoped_cards_dataframe(
-            range=range, year=year, date_from=date_from, date_to=date_to
-        )
-        current = calculate_recycle_volume(current_df)
+# @router.get("/recycle-volume")
+# def recycle_volume(
+#     range: str = "td",
+#     year: int | None = None,
+#     date_from: str | None = None,
+#     date_to: str | None = None,
+# ):
+#     try:
+#         current_df, bounds = _load_scoped_cards_dataframe(
+#             range=range, year=year, date_from=date_from, date_to=date_to
+#         )
+#         current = calculate_recycle_volume(current_df)
 
-        return {
-            "status": "success",
-            "card": "Recycle Volume",
-            **bounds,
-            "value": current,
-            "unit": "m³",
-            "meters": sheet_difference_totals(
-                current_df, "wwtp_ro_in", "wwtp_ro_rejection"
-            ),
-        }
+#         return {
+#             "status": "success",
+#             "card": "Recycle Volume",
+#             **bounds,
+#             "value": current,
+#             "unit": "m³",
+#             "meters": sheet_difference_totals(
+#                 current_df, "wwtp_ro_in", "wwtp_ro_rejection"
+#             ),
+#         }
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/factory-discharge")
@@ -274,7 +274,7 @@ def all_cards(
                     "card": "Recycling Percent",
                     "value": calculate_recycling_percent(current_df),
                     "unit": "%",
-                    "absolute_value": calculate_recycle_volume(current_df) / calculate_withdrawal(current_df),
+                    "absolute_value": round(calculate_recycle_volume(current_df) / wd_val, 2),
                     "absolute_unit": "%",
                     "meters": recycling_meters,
                 },
