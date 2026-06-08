@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException
 
 from services.calculation_service import (
     WITHDRAWAL_SOURCE_KEYS,
+    calculate_recycle_volume,
     calculate_recycling_percent,
     sheet_difference_totals,
 )
@@ -122,6 +123,8 @@ def recycling_percent(
             **bounds,
             "value": current,
             "unit": "%",
+            "absolute_value": calculate_recycle_volume(current_df),
+            "absolute_unit": "m³",
             "meters": meters,
         }
 

@@ -42,30 +42,47 @@ def _load_scoped_cards_dataframe(
     return current_df, bounds
 
 
-@router.get("/fresh-water-tank")
-def fresh_water_tank(
-    range: str = "td",
-    year: int | None = None,
-    date_from: str | None = None,
-    date_to: str | None = None,
-):
+def get_production_unit_for_bounds(bounds: dict) -> float | None:
+    date_to_str = bounds.get("date_to")
+    range_type = bounds.get("range")
+    if not date_to_str:
+        return None
     try:
-        current_df, bounds = _load_scoped_cards_dataframe(
-            range=range, year=year, date_from=date_from, date_to=date_to
-        )
-        current = fetch_meter_total(current_df, METERS["fresh_water_tank"])
+        year = int(date_to_str.split("-")[0])
+        if year == 2026:
+            if range_type == "mtd":
+                return 19393.0
+            elif range_type == "ytd":
+                return 139458.0
+    except Exception:
+        pass
+    return None
 
-        return {
-            "status": "success",
-            "card": "Fresh Water Tank",
-            **bounds,
-            "value": current,
-            "unit": "m³",
-            "meters": sheet_difference_totals(current_df, "fresh_water_tank"),
-        }
 
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+# @router.get("/fresh-water-tank")
+# def fresh_water_tank(
+#     range: str = "td",
+#     year: int | None = None,
+#     date_from: str | None = None,
+#     date_to: str | None = None,
+# ):
+#     try:
+#         current_df, bounds = _load_scoped_cards_dataframe(
+#             range=range, year=year, date_from=date_from, date_to=date_to
+#         )
+#         current = fetch_meter_total(current_df, METERS["fresh_water_tank"])
+
+#         return {
+#             "status": "success",
+#             "card": "Fresh Water Tank",
+#             **bounds,
+#             "value": current,
+#             "unit": "m³",
+#             "meters": sheet_difference_totals(current_df, "fresh_water_tank"),
+#         }
+
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/water-withdrawal")
@@ -80,6 +97,8 @@ def water_withdrawal(
             range=range, year=year, date_from=date_from, date_to=date_to
         )
         current = calculate_withdrawal(current_df)
+        pu = get_production_unit_for_bounds(bounds)
+        intensity = round(current / pu, 2) if pu else None
 
         return {
             "status": "success",
@@ -87,6 +106,9 @@ def water_withdrawal(
             **bounds,
             "value": current,
             "unit": "m³",
+            "intensity": intensity,
+            "intensity_unit": "m³/Unit",
+            "production_unit": pu,
             "meters": sheet_difference_totals(current_df, *WITHDRAWAL_SOURCE_KEYS),
         }
 
@@ -134,6 +156,8 @@ def factory_discharge(
             range=range, year=year, date_from=date_from, date_to=date_to
         )
         current = calculate_discharge(current_df)
+        pu = get_production_unit_for_bounds(bounds)
+        intensity = round(current / pu, 2) if pu else None
 
         return {
             "status": "success",
@@ -141,7 +165,35 @@ def factory_discharge(
             **bounds,
             "value": current,
             "unit": "m³",
+            "intensity": intensity,
+            "intensity_unit": "m³/Unit",
+            "production_unit": pu,
             "meters": sheet_difference_totals(current_df, "wwtp_in", "wwtp_ro_in"),
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/production")
+def production_card(
+    range: str = "td",
+    year: int | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+):
+    try:
+        current_df, bounds = _load_scoped_cards_dataframe(
+            range=range, year=year, date_from=date_from, date_to=date_to
+        )
+        pu = get_production_unit_for_bounds(bounds)
+
+        return {
+            "status": "success",
+            "card": "Production",
+            **bounds,
+            "value": pu,
+            "unit": "Unit",
         }
 
     except Exception as e:
@@ -175,20 +227,30 @@ def all_cards(
             sheet_difference_totals(current_df, "wwtp_ro_in", "wwtp_ro_rejection")
         )
 
+        pu = get_production_unit_for_bounds(bounds)
+        wd_val = calculate_withdrawal(current_df)
+        wd_intensity = round(wd_val / pu, 2) if pu else None
+        
+        fd_val = calculate_discharge(current_df)
+        fd_intensity = round(fd_val / pu, 2) if pu else None
+
         return {
             "status": "success",
             **bounds,
             "cards": {
-                "fresh_water_tank": {
-                    "card": "Fresh Water Tank",
-                    "value": fetch_meter_total(current_df, METERS["fresh_water_tank"]),
-                    "unit": "m³",
-                    "meters": sheet_difference_totals(current_df, "fresh_water_tank"),
-                },
+                # "fresh_water_tank": {
+                #     "card": "Fresh Water Tank",
+                #     "value": fetch_meter_total(current_df, METERS["fresh_water_tank"]),
+                #     "unit": "m³",
+                #     "meters": sheet_difference_totals(current_df, "fresh_water_tank"),
+                # },
                 "water_withdrawal": {
                     "card": "Water Withdrawal",
-                    "value": calculate_withdrawal(current_df),
+                    "value": wd_val,
                     "unit": "m³",
+                    "intensity": wd_intensity,
+                    "intensity_unit": "m³/Unit",
+                    "production_unit": pu,
                     "meters": sheet_difference_totals(current_df, *WITHDRAWAL_SOURCE_KEYS),
                 },
                 "recycle_volume": {
@@ -201,15 +263,25 @@ def all_cards(
                 },
                 "factory_discharge": {
                     "card": "Factory Discharge",
-                    "value": calculate_discharge(current_df),
+                    "value": fd_val,
                     "unit": "m³",
+                    "intensity": fd_intensity,
+                    "intensity_unit": "m³/Unit",
+                    "production_unit": pu,
                     "meters": sheet_difference_totals(current_df, "wwtp_in", "wwtp_ro_in"),
                 },
                 "recycling_percent": {
                     "card": "Recycling Percent",
                     "value": calculate_recycling_percent(current_df),
                     "unit": "%",
+                    "absolute_value": calculate_recycle_volume(current_df) / calculate_withdrawal(current_df),
+                    "absolute_unit": "%",
                     "meters": recycling_meters,
+                },
+                "production": {
+                    "card": "Production",
+                    "value": pu,
+                    "unit": "Unit",
                 },
             },
         }
