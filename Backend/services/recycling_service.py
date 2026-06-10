@@ -90,6 +90,24 @@ def _resolve_selected_week_window(
     return start_ts, end_ts
 
 
+def _resolve_selected_day_window(
+    latest_ts: pd.Timestamp,
+    *,
+    year: int | None,
+    month: int | None,
+    day: int | None,
+    min_year: int = 2019,
+) -> tuple[pd.Timestamp, pd.Timestamp]:
+    y, m = _resolve_selected_month_year(latest_ts, year=year, month=month, min_year=min_year)
+    _, last_day = calendar.monthrange(y, m)
+    d = int(day) if day is not None else int(latest_ts.day)
+    if d < 1 or d > last_day:
+        raise HTTPException(status_code=400, detail=f"day must be between 1 and {last_day}")
+    start_ts = pd.Timestamp(date(y, m, d)) + pd.Timedelta(hours=8)
+    end_ts = start_ts + pd.Timedelta(hours=24) - pd.Timedelta(milliseconds=1)
+    return start_ts, end_ts
+
+
 @router.get("/recycling-percent")
 def recycling_percent(
     range: str = "td",
@@ -104,12 +122,10 @@ def recycling_percent(
             df_full, range, year=year, date_from=date_from, date_to=date_to
         )
         
-        # 2. Extract bounds
-        start_date = bounds.get("date_from")
-        end_date = bounds.get("date_to")
-        
-        # 3. Load only the scoped data from SQL (Requirement 3)
-        current_df = load_sql_data(start_date, end_date)
+        # 2. Filter in-memory (TIMESTAMP stored as text; FLOW_RATE sums used for totals)
+        current_df = get_filtered_dataframe(
+            df_full, range, year=year, date_from=date_from, date_to=date_to
+        )
         
         current = calculate_recycling_percent(current_df)
 
@@ -145,7 +161,11 @@ def recycling_percent_chart(
         latest_ts = get_latest_date()
         
         # 1. Resolve date boundaries (Requirement 3)
-        if chart_range == "weekly":
+        if chart_range == "hourly":
+            start_ts, end_ts = _resolve_selected_day_window(
+                latest_ts, year=year, month=month, day=day
+            )
+        elif chart_range == "weekly":
             start_ts, end_ts = _resolve_selected_week_window(
                 latest_ts, year=year, month=month, week=week
             )
@@ -162,7 +182,7 @@ def recycling_percent_chart(
             raise HTTPException(status_code=400, detail="Invalid chart range")
 
         # 2. Scoped database loading (Requirement 3)
-        df = load_sql_data(start_ts, end_ts)
+        df = load_sql_data(start_ts.date(), end_ts.date())
         if df.empty:
             return {
                 "status": "success",
@@ -179,7 +199,18 @@ def recycling_percent_chart(
         labels: list[str] = []
         series: list[float] = []
 
-        if chart_range == "weekly":
+        if chart_range == "hourly":
+            df = df[(df["DATE"] >= start_ts) & (df["DATE"] <= end_ts)]
+            df["HOUR_SLOT"] = ((df["DATE"] - start_ts).dt.total_seconds() // 3600).astype(int)
+            for slot in range(24):
+                hour_ts = start_ts + pd.Timedelta(hours=slot)
+                hour_data = df[df["HOUR_SLOT"] == slot]
+                labels.append(hour_ts.strftime("%I %p").lstrip("0"))
+                series.append(calculate_recycling_percent(hour_data))
+            date_from = start_ts.isoformat()
+            date_to = end_ts.isoformat()
+
+        elif chart_range == "weekly":
             for ts in pd.date_range(start=start_ts, end=end_ts, freq="D"):
                 day_ts = pd.Timestamp(ts).normalize()
                 day_data = df[df["DATE_NORM"] == day_ts]

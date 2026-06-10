@@ -183,6 +183,20 @@ function findCardValue(container, candidates) {
   }
   return null;
 }
+function getDpl1CardField(metric, field = 'value') {
+  const source = getCardsContainer(dpl1Api.rawCards) || dpl1Api.cards || {};
+  const aliases = {
+    withdraw: 'water_withdrawal',
+    discharge: 'factory_discharge',
+    recycle: 'recycle_volume',
+    recycleRate: 'recycling_percent',
+    production: 'production'
+  };
+  const key = aliases[metric] || metric;
+  const card = source[key];
+  if (card && typeof card === 'object' && card[field] != null) return card[field];
+  return null;
+}
 function getDpl1CardValue(metric) {
   const source = getCardsContainer(dpl1Api.rawCards) || dpl1Api.cards || {};
   const direct = extractValue(source[metric]);
@@ -204,6 +218,10 @@ function getDpl1CardValue(metric) {
 }
 function renderDpl1Cards() {
   const el = document.getElementById('dpl1-kpi'); if (!el) return;
+  if (dpl1Api.error && !dpl1Api.rawCards) {
+    el.innerHTML = `<div class="kpi-card" style="grid-column:1/-1;min-height:150px;display:flex;align-items:center;justify-content:center;text-align:center"><div><div class="kpi-lbl" style="margin-bottom:8px">Backend data unavailable</div><div style="color:#dc2626;font-weight:700;font-size:12px;max-width:760px">${dpl1Api.error}</div></div></div>`;
+    return;
+  }
   const cardData = {
     freshWaterTank: getDpl1CardValue('freshWaterTank'),
     withdraw: getDpl1CardValue('withdraw'),
@@ -228,8 +246,14 @@ function renderDpl1Cards() {
   const processAbs = cardData.processRecycle != null ? cardData.processRecycle : Math.max(0, vals.recycle - domesticAbs);
   const processPct = 0;
   const domesticPct = 0;
-  const withdrawalPerUnit = vals.production > 0 ? (vals.withdraw / vals.production).toFixed(3) : fmtExact(vals.withdraw);
-  const dischargePerUnit = vals.production > 0 ? (vals.discharge / vals.production).toFixed(3) : fmtExact(vals.discharge);
+  const withdrawIntensity = getDpl1CardField('withdraw', 'intensity');
+  const dischargeIntensity = getDpl1CardField('discharge', 'intensity');
+  const withdrawalPerUnit = withdrawIntensity != null
+    ? Number(withdrawIntensity).toFixed(3)
+    : (vals.production > 0 ? (vals.withdraw / vals.production).toFixed(3) : fmtExact(vals.withdraw));
+  const dischargePerUnit = dischargeIntensity != null
+    ? Number(dischargeIntensity).toFixed(3)
+    : (vals.production > 0 ? (vals.discharge / vals.production).toFixed(3) : fmtExact(vals.discharge));
   const unit = '<span class="kpi-unit">m&#179;</span>';
   const icons = {
     withdrawal: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.15" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.8S6.2 9 6.2 13.8a5.8 5.8 0 0 0 11.6 0C17.8 9 12 2.8 12 2.8z"/><path d="M9.3 14.1c.8 1.4 2.2 2 3.9 1.6"/></svg>',
@@ -283,6 +307,7 @@ function renderDpl1View() {
   renderRcChart();
   renderWaterRecycleChart();
   if (typeof initDpl1LayoutFrame === 'function') initDpl1LayoutFrame();
+  if (typeof loadDpl1MeterStatus === 'function') loadDpl1MeterStatus();
 }
 function applyDpl1ApiDefaults() {
   if (dpl1Api.defaultsApplied) return;

@@ -220,13 +220,12 @@ function renderBccChart() {
   const payload = dpl1Api.mainChart;
   const allSeries = payload.series || [];
   const allowed = ['withdraw', 'discharge'];
-  const withdrawalSeries = allSeries.find(s => resolveMetricKey(s.label) === 'withdraw');
   const sourceSeries = allSeries
     .filter(s => allowed.includes(resolveMetricKey(s.label)))
     .map(s => ({
       ...s,
       label: resolveMetricKey(s.label) === 'withdraw' ? 'Withdrawal / Unit' : 'Discharge / Unit',
-      data: s.data.map((v, idx) => +(Number(v || 0) / Math.max(1, Number(withdrawalSeries?.data?.[idx] || 0) * 82)).toFixed(3))
+      data: s.data.map(v => +Number(v || 0).toFixed(3))
     }));
   const series = bccMeter === 'all' ? sourceSeries : sourceSeries.filter((s) => resolveMetricKey(s.label) === bccMeter || normalizeKey(s.label) === normalizeKey(bccMeter));
   let chosen = series.length ? series : allSeries;

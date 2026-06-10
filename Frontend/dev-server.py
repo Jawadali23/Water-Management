@@ -1,6 +1,13 @@
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import sys
+import os
+
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 
 ROOT = Path(__file__).resolve().parent
@@ -25,5 +32,5 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
 if __name__ == "__main__":
     server = ThreadingHTTPServer(("127.0.0.1", PORT), NoCacheHandler)
     print(f"No-cache dev server running at http://127.0.0.1:{PORT}/Frontend/index.html")
-    print(f"Serving: {ROOT}")
+    print(f"Serving: {os.fsdecode(ROOT)}")
     server.serve_forever()

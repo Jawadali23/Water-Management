@@ -5,15 +5,16 @@ import pandas as pd
 from fastapi import APIRouter, HTTPException
 
 from database.connection import get_db_connection
-from services.sql_service import load_sql_data, get_latest_date
 from services.calculation_service import (
-    calculate_withdrawal,
+    METERS,
     calculate_discharge,
     calculate_recycle_volume,
     calculate_recycling_percent,
+    calculate_withdrawal,
     fetch_meter_total,
-    METERS,
 )
+from services.production_service import get_production_between, get_production_map, get_production_series, per_unit
+from services.sql_service import get_latest_date, get_meter_status_snapshot, load_sql_data
 
 router = APIRouter(prefix="/api")
 
@@ -89,6 +90,24 @@ def _resolve_selected_week_window(
     return start_ts, end_ts
 
 
+def _resolve_selected_day_window(
+    latest_ts: pd.Timestamp,
+    *,
+    year: int | None,
+    month: int | None,
+    day: int | None,
+    min_year: int = 2019,
+) -> tuple[pd.Timestamp, pd.Timestamp]:
+    y, m = _resolve_selected_month_year(latest_ts, year=year, month=month, min_year=min_year)
+    _, last_day = calendar.monthrange(y, m)
+    d = int(day) if day is not None else int(latest_ts.day)
+    if d < 1 or d > last_day:
+        raise HTTPException(status_code=400, detail=f"day must be between 1 and {last_day}")
+    start_ts = pd.Timestamp(date(y, m, d)) + pd.Timedelta(hours=8)
+    end_ts = start_ts + pd.Timedelta(hours=24) - pd.Timedelta(milliseconds=1)
+    return start_ts, end_ts
+
+
 @router.get("/dashboard")
 def dashboard(
     chart_range: str = "weekly",
@@ -102,7 +121,11 @@ def dashboard(
         latest_ts = get_latest_date()
         
         # 1. Resolve exact date boundaries beforehand to filter in SQL (Requirement 3 & 5)
-        if chart_range == "weekly":
+        if chart_range == "hourly":
+            start_ts, end_ts = _resolve_selected_day_window(
+                latest_ts, year=year, month=month, day=day
+            )
+        elif chart_range == "weekly":
             start_ts, end_ts = _resolve_selected_week_window(
                 latest_ts, year=year, month=month, week=week
             )
@@ -119,7 +142,7 @@ def dashboard(
             raise HTTPException(status_code=400, detail="Invalid chart range")
 
         # 2. Query scoped SQL data directly instead of full view (Requirement 3 & 5)
-        df = load_sql_data(start_ts, end_ts)
+        df = load_sql_data(start_ts.date(), end_ts.date())
         if df.empty:
             return {
                 "status": "success",
@@ -133,57 +156,105 @@ def dashboard(
         df["DATE_NORM"] = df["DATE"].dt.normalize()
 
         labels: list[str] = []
-        wd_series: list[float] = []
-        fwt_series: list[float] = []
-        dc_series: list[float] = []
+        bucket_dates: list[date] = []
+        wd_abs_series: list[float] = []
+        dc_abs_series: list[float] = []
+        wd_unit_series: list[float] = []
+        dc_unit_series: list[float] = []
 
-        if chart_range == "weekly":
+        production_map = get_production_map(start_ts.date(), end_ts.date())
+
+        if chart_range == "hourly":
+            df = df[(df["DATE"] >= start_ts) & (df["DATE"] <= end_ts)]
+            df["HOUR_SLOT"] = ((df["DATE"] - start_ts).dt.total_seconds() // 3600).astype(int)
+            day_production = production_map.get(start_ts.date(), 0)
+            for slot in range(24):
+                hour_ts = start_ts + pd.Timedelta(hours=slot)
+                hour_data = df[df["HOUR_SLOT"] == slot]
+                labels.append(hour_ts.strftime("%I %p").lstrip("0"))
+                bucket_dates.append(start_ts.date())
+                withdrawal = calculate_withdrawal(hour_data)
+                discharge = calculate_discharge(hour_data)
+                wd_abs_series.append(withdrawal)
+                dc_abs_series.append(discharge)
+                wd_unit_series.append(per_unit(withdrawal, day_production))
+                dc_unit_series.append(per_unit(discharge, day_production))
+
+        elif chart_range == "weekly":
             for ts in pd.date_range(start=start_ts, end=end_ts, freq="D"):
                 day_ts = pd.Timestamp(ts).normalize()
                 day_data = df[df["DATE_NORM"] == day_ts]
                 labels.append(_label_d_mmm_yy(day_ts))
-                wd_series.append(calculate_withdrawal(day_data))
-                fwt_series.append(
-                    fetch_meter_total(day_data, METERS["fresh_water_tank"])
-                )
-                dc_series.append(calculate_discharge(day_data))
+                bucket_dates.append(day_ts.date())
+                withdrawal = calculate_withdrawal(day_data)
+                discharge = calculate_discharge(day_data)
+                production = production_map.get(day_ts.date(), 0)
+                wd_abs_series.append(withdrawal)
+                dc_abs_series.append(discharge)
+                wd_unit_series.append(per_unit(withdrawal, production))
+                dc_unit_series.append(per_unit(discharge, production))
 
         elif chart_range == "monthly" or chart_range == "daily":
             for d in pd.date_range(start=start_ts, end=end_ts, freq="D"):
                 day_ts = pd.Timestamp(d).normalize()
                 day_data = df[df["DATE_NORM"] == day_ts]
                 labels.append(_label_d_mmm_yy(day_ts))
-                wd_series.append(calculate_withdrawal(day_data))
-                fwt_series.append(
-                    fetch_meter_total(day_data, METERS["fresh_water_tank"])
-                )
-                dc_series.append(calculate_discharge(day_data))
+                bucket_dates.append(day_ts.date())
+                withdrawal = calculate_withdrawal(day_data)
+                discharge = calculate_discharge(day_data)
+                production = production_map.get(day_ts.date(), 0)
+                wd_abs_series.append(withdrawal)
+                dc_abs_series.append(discharge)
+                wd_unit_series.append(per_unit(withdrawal, production))
+                dc_unit_series.append(per_unit(discharge, production))
 
         elif chart_range == "yearly":
             y = start_ts.year
             df["YEAR"] = df["DATE"].dt.year
             df["MONTH"] = df["DATE"].dt.month
+            month_dates = [date(y, m, 1) for m in range(1, 13)]
+            month_production = get_production_series(
+                month_dates, granularity="monthly"
+            )
             for m in range(1, 13):
                 month_data = df[(df["YEAR"] == y) & (df["MONTH"] == m)]
                 labels.append(_label_mmm_yy(pd.Timestamp(date(y, m, 1))))
-                wd_series.append(calculate_withdrawal(month_data))
-                fwt_series.append(
-                    fetch_meter_total(month_data, METERS["fresh_water_tank"])
-                )
-                dc_series.append(calculate_discharge(month_data))
+                bucket_dates.append(date(y, m, 1))
+                withdrawal = calculate_withdrawal(month_data)
+                discharge = calculate_discharge(month_data)
+                production = month_production[m - 1]
+                wd_abs_series.append(withdrawal)
+                dc_abs_series.append(discharge)
+                wd_unit_series.append(per_unit(withdrawal, production))
+                dc_unit_series.append(per_unit(discharge, production))
 
         if metric == "all":
             datasets = {
-                "water_withdrawal": wd_series,
-                "fresh_water_tank": fwt_series,
-                "factory_discharge": dc_series,
+                "withdrawal_per_unit": wd_unit_series,
+                "discharge_per_unit": dc_unit_series,
+                "water_withdrawal": wd_abs_series,
+                "factory_discharge": dc_abs_series,
             }
-        elif metric == "water_withdrawal":
-            datasets = {"water_withdrawal": wd_series}
+        elif metric in ("withdrawal_per_unit", "withdraw", "water_withdrawal"):
+            datasets = {
+                "withdrawal_per_unit": wd_unit_series,
+                "water_withdrawal": wd_abs_series,
+            }
+        elif metric in ("discharge_per_unit", "discharge", "factory_discharge"):
+            datasets = {
+                "discharge_per_unit": dc_unit_series,
+                "factory_discharge": dc_abs_series,
+            }
         elif metric == "fresh_water_tank":
-            datasets = {"fresh_water_tank": fwt_series}
-        elif metric == "factory_discharge":
-            datasets = {"factory_discharge": dc_series}
+            datasets = {
+                "fresh_water_tank": [
+                    fetch_meter_total(
+                        df[df["DATE_NORM"] == pd.Timestamp(bucket).normalize()],
+                        METERS["fresh_water_tank"],
+                    )
+                    for bucket in bucket_dates
+                ]
+            }
         else:
             raise HTTPException(status_code=400, detail="Invalid metric")
 
@@ -256,17 +327,7 @@ def date_options(year: int | None = None, month: int | None = None):
 @router.get("/meter-status")
 def get_meter_status():
     try:
-        conn   = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("EXEC sp_GetMeterStatus")
-        columns = [col[0] for col in cursor.description]
-        results = []
-        for row in cursor.fetchall():
-            res = dict(zip(columns, row))
-            if res.get("timestamp"):
-                res["timestamp"] = res["timestamp"].isoformat()
-            results.append(res)
-        conn.close()
+        results = get_meter_status_snapshot()
         return {"status": "success", "count": len(results), "data": results}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch meter status: {str(e)}")

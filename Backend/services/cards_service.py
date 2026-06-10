@@ -10,6 +10,9 @@ from services.calculation_service import (
     fetch_meter_total,
     sheet_difference_totals,
 )
+from datetime import date as dt_date
+
+from services.production_service import get_production_between, per_unit
 from services.sql_service import load_sql_data
 from utils.filters import get_filtered_dataframe, get_range_date_bounds
 
@@ -36,27 +39,26 @@ def _load_scoped_cards_dataframe(
         date_from=date_from,
         date_to=date_to,
     )
-    start_date = bounds.get("date_from")
-    end_date = bounds.get("date_to")
-    current_df = load_sql_data(start_date, end_date)
+    current_df = get_filtered_dataframe(
+        df_full,
+        range,
+        year=year,
+        date_from=date_from,
+        date_to=date_to,
+    )
     return current_df, bounds
 
 
-def get_production_unit_for_bounds(bounds: dict) -> float | None:
-    date_to_str = bounds.get("date_to")
-    range_type = bounds.get("range")
-    if not date_to_str:
+def get_production_unit_for_bounds(bounds: dict) -> int | None:
+    date_from = bounds.get("date_from")
+    date_to = bounds.get("date_to")
+    if not date_from or not date_to:
         return None
-    try:
-        year = int(date_to_str.split("-")[0])
-        if year == 2026:
-            if range_type == "mtd":
-                return 19393.0
-            elif range_type == "ytd":
-                return 139458.0
-    except Exception:
-        pass
-    return None
+    production = get_production_between(
+        dt_date.fromisoformat(str(date_from)),
+        dt_date.fromisoformat(str(date_to)),
+    )
+    return production or None
 
 
 # @router.get("/fresh-water-tank")
@@ -98,7 +100,7 @@ def water_withdrawal(
         )
         current = calculate_withdrawal(current_df)
         pu = get_production_unit_for_bounds(bounds)
-        intensity = round(current / pu, 2) if pu else None
+        intensity = per_unit(current, pu) if pu else None
 
         return {
             "status": "success",
@@ -157,7 +159,7 @@ def factory_discharge(
         )
         current = calculate_discharge(current_df)
         pu = get_production_unit_for_bounds(bounds)
-        intensity = round(current / pu, 2) if pu else None
+        intensity = per_unit(current, pu) if pu else None
 
         return {
             "status": "success",
@@ -183,7 +185,7 @@ def production_card(
     date_to: str | None = None,
 ):
     try:
-        current_df, bounds = _load_scoped_cards_dataframe(
+        _, bounds = _load_scoped_cards_dataframe(
             range=range, year=year, date_from=date_from, date_to=date_to
         )
         pu = get_production_unit_for_bounds(bounds)
@@ -192,7 +194,7 @@ def production_card(
             "status": "success",
             "card": "Production",
             **bounds,
-            "value": pu,
+            "value": pu or 0,
             "unit": "Unit",
         }
 
@@ -229,10 +231,12 @@ def all_cards(
 
         pu = get_production_unit_for_bounds(bounds)
         wd_val = calculate_withdrawal(current_df)
-        wd_intensity = round(wd_val / pu, 2) if pu else None
-        
+        wd_intensity = per_unit(wd_val, pu) if pu else None
+
         fd_val = calculate_discharge(current_df)
-        fd_intensity = round(fd_val / pu, 2) if pu else None
+        fd_intensity = per_unit(fd_val, pu) if pu else None
+        recycle_val = calculate_recycle_volume(current_df)
+        recycling_percent = calculate_recycling_percent(current_df)
 
         return {
             "status": "success",
@@ -255,7 +259,7 @@ def all_cards(
                 },
                 "recycle_volume": {
                     "card": "Recycle Volume",
-                    "value": calculate_recycle_volume(current_df),
+                    "value": recycle_val,
                     "unit": "m³",
                     "meters": sheet_difference_totals(
                         current_df, "wwtp_ro_in", "wwtp_ro_rejection"
@@ -272,9 +276,9 @@ def all_cards(
                 },
                 "recycling_percent": {
                     "card": "Recycling Percent",
-                    "value": calculate_recycling_percent(current_df),
+                    "value": recycling_percent,
                     "unit": "%",
-                    "absolute_value": round(calculate_recycle_volume(current_df) / wd_val, 2),
+                    "absolute_value": round(recycle_val / wd_val, 2) if wd_val else 0,
                     "absolute_unit": "%",
                     "meters": recycling_meters,
                 },

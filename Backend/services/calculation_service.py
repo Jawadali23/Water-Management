@@ -1,15 +1,15 @@
 METERS = {
     "fresh_water_tank": "Fresh Water Tank",
-    "overhead_admin_tank": "Overhead Admin Tank",
+    "overhead_admin_tank": "Over Head Tank",
     "well_water": "Well Water",
-    "domestic_fresh_water": "Domestic Fresh Water",
-    "drinking_water_ro_plant": "Drinking Water RO plant",
-    "wwtp_in": "WWTP IN (Digital)",
-    "wwtp_ro_in": "WWTP RO PLANT IN",
-    "wwtp_ro_rejection": "WWTP RO PLANT REJECTION",
+    "domestic_fresh_water": "Domestic Fresh",
+    "drinking_water_ro_plant": "Drinking Water RO Plant",
+    "wwtp_in": "WWTP IN",
+    "wwtp_ro_in": "WWTP RO IN",
+    "wwtp_ro_rejection": "WWTP RO Rejection",
 }
 
-# Meters whose DIFFERENCE (m³) columns feed water withdrawal totals
+# Meters whose summed FLOW_RATE values feed water withdrawal totals
 WITHDRAWAL_SOURCE_KEYS = (
     "well_water",
     "overhead_admin_tank",

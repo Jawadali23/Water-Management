@@ -1,3 +1,74 @@
+function dpl1FormatRelativeTime(value) {
+  if (!value) return '—';
+  const parsed = new Date(String(value).replace(' ', 'T'));
+  if (Number.isNaN(parsed.getTime())) return String(value);
+  const diffMs = Date.now() - parsed.getTime();
+  const mins = Math.round(diffMs / 60000);
+  if (mins < 1) return 'Just now';
+  if (mins < 60) return mins + ' min ago';
+  const hrs = Math.round(mins / 60);
+  if (hrs < 48) return hrs + ' hrs ago';
+  return parsed.toLocaleString();
+}
+
+async function loadDpl1MeterStatus() {
+  const listView = document.getElementById('dpl1-list-view');
+  if (!listView) return;
+  try {
+    const res = await fetch(`${API}/api/meter-status`);
+    if (!res.ok) throw new Error('meter-status ' + res.status);
+    const payload = await res.json();
+    const rows = Array.isArray(payload.data) ? payload.data : [];
+    if (!rows.length) return;
+
+    const descriptions = {
+      'Fresh Water Tank': 'Meter 1 · Main intake storage',
+      'Well Water': 'Meter 2 · Well intake pump',
+      'Over Head Tank': 'Meter 3 · Main distribution',
+      'Domestic Fresh': 'Meter 4 · Facility supply',
+      'Drinking Water RO Plant': 'Meter 5 · Potable supply + Reverse osmosis',
+      'WWTP IN': 'Meter 6 · Wastewater treatment plant inlet',
+      'WWTP RO IN': 'Meter 7 · RO unit feed inlet',
+      'WWTP RO Rejection': 'Meter 8 · RO reject stream'
+    };
+
+    listView.innerHTML = rows.map((meter) => {
+      const online = String(meter.status || '').toUpperCase() === 'ONLINE';
+      const dotClass = online ? 'ms-on-c' : 'ms-off-c';
+      const pillClass = online ? 'ms-pill-on' : 'ms-pill-off';
+      const note = online
+        ? dpl1FormatRelativeTime(meter.last_update)
+        : '<span class="warn">&#9888; Offline</span>';
+      return `<div class="ms-row">
+        <div class="ms-dot ${dotClass}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="${online ? '#059669' : '#dc2626'}" stroke-width="2.5" stroke-linecap="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></div>
+        <div class="ms-info">
+          <div class="ms-name">${meter.meter_name || '—'}</div>
+          <div class="ms-desc">${descriptions[meter.meter_name] || 'Flow meter'} · ${Number(meter.flow_rate || 0).toFixed(2)} m³/h · ${Number(meter.forward_total || 0).toFixed(2)} m³ total</div>
+        </div>
+        <div class="ms-right"><span class="ms-pill ${pillClass}">${online ? 'ONLINE' : 'OFFLINE'}</span><div class="ms-note">${note}</div></div>
+      </div>`;
+    }).join('');
+
+    const countEl = document.querySelector('#view-dpl1 .ms-cnt');
+    if (countEl) {
+      countEl.innerHTML = `<div class="pulse" style="width:4px;height:4px;display:inline-block;margin-right:4px"></div>${rows.length} Devices`;
+    }
+
+    document.querySelectorAll('#dpl1-layout-container .fm-meter-icon').forEach((el) => {
+      const match = rows.find((m) => String(m.meter_name).toLowerCase() === String(el.dataset.name || '').toLowerCase());
+      if (!match) return;
+      el.dataset.flow = Number(match.flow_rate || 0).toFixed(2);
+      el.dataset.total = Number(match.forward_total || 0).toFixed(2);
+      el.dataset.update = match.last_update || '—';
+      el.dataset.status = String(match.status || 'offline').toLowerCase();
+      const dot = el.querySelector('.fm-meter-status-dot');
+      if (dot) dot.setAttribute('fill', String(match.status).toUpperCase() === 'ONLINE' ? '#28a745' : '#dc2626');
+    });
+  } catch (err) {
+    console.warn('DPL1 meter status load failed:', err);
+  }
+}
+
 // ═══ DPL 1 TABS SWITCHER ═══
 function dpl1SwitchTab(tab) {
   var listView = document.getElementById('dpl1-list-view');

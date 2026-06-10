@@ -11,7 +11,7 @@ def main():
         cursor = conn.cursor()
         
         with open("cols_inspect.txt", "w", encoding="utf-8") as f:
-            cursor.execute("SELECT TOP 100 * FROM All_Meters")
+            cursor.execute("SELECT * FROM manual_reading")
             cols = [col[0] for col in cursor.description]
             rows = cursor.fetchall()
             
@@ -33,7 +33,7 @@ def main():
             f.write("\n=== Checking entire table for any non-empty values ===\n")
             for col in cols:
                 try:
-                    cursor.execute(f"SELECT COUNT(*) FROM All_Meters WHERE [{col}] IS NOT NULL AND RTRIM(LTRIM(CAST([{col}] AS VARCHAR))) <> ''")
+                    cursor.execute(f"SELECT COUNT(*) FROM manual_reading WHERE [{col}] IS NOT NULL AND RTRIM(LTRIM(CAST([{col}] AS VARCHAR))) <> ''")
                     cnt = cursor.fetchone()[0]
                     f.write(f"Total non-empty in [{col}]: {cnt}\n")
                 except Exception as err:

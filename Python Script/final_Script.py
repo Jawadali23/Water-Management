@@ -18,18 +18,18 @@ logging.basicConfig(
 )
 
 # ==========================================================
-# SQL SERVER CONFIG  ← Update these values
+# SQL SERVER CONFIG  ← Update these values or override with environment variables
 # ==========================================================
-SQL_SERVER   = r"HPLAPTOP15DW\SQLEXPRESS01"   # e.g. "localhost", r"MACHINE\SQLEXPRESS", or "192.168.1.10"
-SQL_DATABASE = "Water_Management"                     # your database name
+SQL_SERVER   = r"A00145469\MSSQLSERVER2025"   # e.g. "localhost", r"MACHINE\SQLEXPRESS", or "192.168.1.10"
+SQL_DATABASE = "Water_Management"             # your database name
 
 # AUTH MODE:
 # True  -> Windows Authentication (same as "Windows Authentication" in SSMS)
 # False -> SQL Server Authentication (username/password)
 USE_WINDOWS_AUTH = False
 
-SQL_USERNAME = "jawad"      # used only when USE_WINDOWS_AUTH = False
-SQL_PASSWORD = "123456" # used only when USE_WINDOWS_AUTH = False
+SQL_USERNAME = "sa"         # used only when USE_WINDOWS_AUTH = False
+SQL_PASSWORD = "12345678"   # used only when USE_WINDOWS_AUTH = False
 
 
 def build_connection_string() -> str:
@@ -46,6 +46,7 @@ def build_connection_string() -> str:
 
 
 CONNECTION_STRING = build_connection_string()
+
 
 # ==========================================================
 # CONFIG
@@ -146,6 +147,10 @@ class StableFlowMeter:
         return result
 
 
+def _metric_column(name: str, metric: str) -> str:
+    return f"[{name}_{metric}]"
+
+
 # ==========================================================
 # SQL SERVER HELPER
 # ==========================================================
@@ -167,6 +172,7 @@ def insert_to_sql(conn, row: dict):
     cursor = conn.cursor()
     cursor.execute(sql, values)
     conn.commit()
+
 
 
 # ==========================================================
@@ -209,6 +215,7 @@ class FlowMonitor:
 
         try:
             conn = pyodbc.connect(CONNECTION_STRING)
+            # Connected to SQL Server (minute-summary table usage removed)
             print("✅ Connected to SQL Server successfully!\n")
         except Exception as e:
             print(f"❌ Failed to connect to SQL Server: {e}")
@@ -219,6 +226,7 @@ class FlowMonitor:
 
         while True:
             results = []
+            cycle_start = datetime.datetime.now()
 
             for meter in self.meters:
                 row = meter.read()
@@ -233,6 +241,8 @@ class FlowMonitor:
                     print(f"⚠️  DB insert failed for {row['meter']}: {e}")
 
                 time.sleep(0.3)
+
+            # Minute-summary upsert skipped (table removed); only raw `flow_logs` are kept.
 
             # Display in terminal
             self.display(results)
