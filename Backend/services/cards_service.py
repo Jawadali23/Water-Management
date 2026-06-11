@@ -226,7 +226,7 @@ def all_cards(
 
         recycling_meters = sheet_difference_totals(current_df, *WITHDRAWAL_SOURCE_KEYS)
         recycling_meters.update(
-            sheet_difference_totals(current_df, "wwtp_ro_in", "wwtp_ro_rejection")
+            sheet_difference_totals(current_df, "overhead_admin_tank")
         )
 
         pu = get_production_unit_for_bounds(bounds)
@@ -257,14 +257,14 @@ def all_cards(
                     "production_unit": pu,
                     "meters": sheet_difference_totals(current_df, *WITHDRAWAL_SOURCE_KEYS),
                 },
-                "recycle_volume": {
-                    "card": "Recycle Volume",
-                    "value": recycle_val,
-                    "unit": "m³",
-                    "meters": sheet_difference_totals(
-                        current_df, "wwtp_ro_in", "wwtp_ro_rejection"
-                    ),
-                },
+                # "recycle_volume": {
+                #     "card": "Recycle Volume",
+                #     "value": recycle_val,
+                #     "unit": "m³",
+                #     "meters": 
+                #          sheet_difference_totals(current_df, "overhead_admin_tank",*WITHDRAWAL_SOURCE_KEYS),
+        
+                # },
                 "factory_discharge": {
                     "card": "Factory Discharge",
                     "value": fd_val,
@@ -278,7 +278,7 @@ def all_cards(
                     "card": "Recycling Percent",
                     "value": recycling_percent,
                     "unit": "%",
-                    "absolute_value": round(recycle_val / wd_val, 2) if wd_val else 0,
+                    "absolute_value": round(recycle_val ,2) if recycle_val else 0,
                     "absolute_unit": "%",
                     "meters": recycling_meters,
                 },

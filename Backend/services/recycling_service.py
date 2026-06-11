@@ -131,7 +131,7 @@ def recycling_percent(
 
         meters = sheet_difference_totals(current_df, *WITHDRAWAL_SOURCE_KEYS)
         meters.update(
-            sheet_difference_totals(current_df, "wwtp_ro_in", "wwtp_ro_rejection")
+            sheet_difference_totals(current_df, "overhead_admin_tank")
         )
 
         return {
@@ -140,7 +140,7 @@ def recycling_percent(
             **bounds,
             "value": current,
             "unit": "%",
-            "absolute_value": round(calculate_recycle_volume(current_df) / calculate_withdrawal(current_df), 2),
+            "absolute_value": round(calculate_recycle_volume(current_df), 2),
             "absolute_unit": "m³",
             "meters": meters,
         }
