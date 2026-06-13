@@ -242,6 +242,7 @@ function renderDpl1Cards() {
     production: cardData.production != null ? cardData.production : Math.round(getVal(local.withdraw) * 82)
   };
   const rcCurr = recycleRate || 0;
+  const recycleAbsolute = getDpl1CardField('recycleRate', 'absolute_value');
   const domesticAbs = cardData.domesticRecycle != null ? cardData.domesticRecycle : Math.round(vals.recycle * 0.5);
   const processAbs = cardData.processRecycle != null ? cardData.processRecycle : Math.max(0, vals.recycle - domesticAbs);
   const processPct = 0;
@@ -296,7 +297,14 @@ function renderDpl1Cards() {
   const sub = (label, value, unitHtml = unit, tone = '') => `<div class="dpl1-kpi-sub ${tone}"><div class="dpl1-kpi-sub-label">${label}</div><div class="dpl1-kpi-sub-value">${value}${unitHtml}</div></div>`;
   el.innerHTML = [
     card('#38b6ff', icons.withdrawal, 'Withdrawal per Unit', 'Intake', withdrawalPerUnit, 'm&#179;/Unit', `<div class="dpl1-kpi-subgrid">${sub('Absolute', fmtExact(vals.withdraw))}</div>`, 'withdraw-card', targetMark(withdrawalPerUnit, .036, 'm&#179;/Unit')),
-    card('#22c55e', icons.recycle, 'Recycle Rate', 'Recycle Rate', fmtExact(rcCurr), '%', `<div class="dpl1-kpi-subgrid two">${sub('Process', processPct.toFixed(1), '<span class="kpi-unit">%</span>', 'process')}${sub('Domestic', domesticPct.toFixed(1), '<span class="kpi-unit">%</span>', 'domestic')}</div><div class="dpl1-kpi-subgrid" style="margin-top:8px">${sub('Absolute Recycled Water', fmtExact(vals.recycle))}</div>`, 'rate-card recycle-card', targetMark(fmtExact(rcCurr), 41, '%', true)),
+    card('#22c55e', icons.recycle, 'Recycle Rate', 'Recycle Rate', fmtExact(rcCurr), '%', `<div class="dpl1-kpi-subgrid two">${sub('Process', processPct.toFixed(1), '<span class="kpi-unit">%</span>', 'process')}${sub('Domestic', domesticPct.toFixed(1), '<span class="kpi-unit">%</span>', 'domestic')}</div><div class="dpl1-kpi-subgrid" style="margin-top:8px">
+    ${sub(
+    'Absolute Recycled Water',
+    fmtExact(
+        recycleAbsolute != null
+            ? recycleAbsolute
+            : vals.recycle
+    ))}</div>`, 'rate-card recycle-card', targetMark(fmtExact(rcCurr), 41, '%', true)),
     card('#f97316', icons.discharge, 'Discharge per Unit', 'WWTP Out', dischargePerUnit, 'm&#179;/Unit', `<div class="dpl1-kpi-subgrid">${sub('Absolute', fmtExact(vals.discharge))}</div>`, 'discharge-card', targetMark(dischargePerUnit, .035, 'm&#179;/Unit')),
     card('#a78bfa', icons.production, 'Production', '', fmt(vals.production), 'Unit', '', 'production-card')
   ].join('');

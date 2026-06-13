@@ -7,8 +7,8 @@ import pandas as pd
 from database.connection import get_db_connection
 from utils.filters import get_range_date_bounds
 
-PACKING_VIEW = "vw_packingcount"
-PRODUCTION_CUTOFF = dt_time(10, 30)
+PACKING_VIEW = "vw_PACKINGCOUNT"
+PRODUCTION_CUTOFF = dt_time(22, 30)
 
 _CACHE: dict = {}
 _CACHE_LOCK = threading.Lock()
@@ -21,21 +21,46 @@ def clear_cache() -> None:
 
 
 def compute_production_date(updated_date: datetime | pd.Timestamp) -> date:
-    """Shift packing timestamps before 10:30 to the previous calendar day."""
+    """Map UPDATED_DATE into the 22:30-to-22:30 production business date."""
     ts = pd.Timestamp(updated_date)
-    if ts.time() < PRODUCTION_CUTOFF:
-        return (ts.date() - timedelta(days=1))
+    if ts.time() >= PRODUCTION_CUTOFF:
+        return ts.date() + timedelta(days=1)
     return ts.date()
 
 
 def _production_date_sql_expr() -> str:
     return """
         CASE
-            WHEN CAST([UPDATED_DATE] AS TIME) < '10:30:00'
-            THEN DATEADD(DAY, -1, CAST([UPDATED_DATE] AS DATE))
+            WHEN CAST([UPDATED_DATE] AS TIME) >= '22:30:00'
+            THEN DATEADD(DAY, 1, CAST([UPDATED_DATE] AS DATE))
             ELSE CAST([UPDATED_DATE] AS DATE)
         END
     """
+
+
+def _business_window_for_dates(
+    start_date: datetime | date | str | None,
+    end_date: datetime | date | str | None,
+) -> tuple[datetime | None, datetime | None]:
+    def to_date(value) -> date | None:
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value.date()
+        if isinstance(value, date):
+            return value
+        text = str(value).strip()
+        return datetime.fromisoformat(text[:10]).date() if text else None
+
+    start_d = to_date(start_date)
+    end_d = to_date(end_date)
+    start_ts = (
+        datetime.combine(start_d - timedelta(days=1), PRODUCTION_CUTOFF)
+        if start_d
+        else None
+    )
+    end_ts = datetime.combine(end_d, PRODUCTION_CUTOFF) if end_d else None
+    return start_ts, end_ts
 
 
 def load_packing_data(
@@ -44,19 +69,10 @@ def load_packing_data(
     *,
     bypass_cache: bool = False,
 ) -> pd.DataFrame:
-    """Load packing rows with a derived ProductionDate column."""
+    """Load packing rows using 22:30-to-22:30 production business days."""
 
-    def to_str(value) -> str | None:
-        if value is None:
-            return None
-        if isinstance(value, (datetime, date)):
-            return value.strftime("%Y-%m-%d")
-        text = str(value).strip()
-        return text[:10] if text else None
-
-    start_str = to_str(start_date)
-    end_str = to_str(end_date)
-    cache_key = ("packing", start_str, end_str)
+    start_ts, end_ts = _business_window_for_dates(start_date, end_date)
+    cache_key = ("packing", start_ts.isoformat() if start_ts else None, end_ts.isoformat() if end_ts else None)
 
     if not bypass_cache:
         with _CACHE_LOCK:
@@ -71,15 +87,15 @@ def load_packing_data(
     """
     params: list[str] = []
 
-    if start_str and end_str:
-        query += f" WHERE {prod_expr} BETWEEN ? AND ?"
-        params = [start_str, end_str]
-    elif start_str:
-        query += f" WHERE {prod_expr} >= ?"
-        params = [start_str]
-    elif end_str:
-        query += f" WHERE {prod_expr} <= ?"
-        params = [end_str]
+    if start_ts and end_ts:
+        query += " WHERE [UPDATED_DATE] >= ? AND [UPDATED_DATE] < ?"
+        params = [start_ts, end_ts]
+    elif start_ts:
+        query += " WHERE [UPDATED_DATE] >= ?"
+        params = [start_ts]
+    elif end_ts:
+        query += " WHERE [UPDATED_DATE] < ?"
+        params = [end_ts]
 
     conn = get_db_connection()
     import warnings
@@ -110,6 +126,21 @@ def sum_production_units(df: pd.DataFrame) -> int:
     return int(df["InventoryID"].count())
 
 
+def _production_dates_from_bounds(bounds: dict) -> tuple[date, date] | None:
+    date_from = bounds.get("date_from")
+    date_to = bounds.get("date_to")
+    if not date_from or not date_to:
+        return None
+
+    start_ts = datetime.fromisoformat(str(date_from))
+    end_ts = datetime.fromisoformat(str(date_to))
+    start_date = start_ts.date() + timedelta(days=1)
+    end_date = end_ts.date()
+    if start_date > end_date:
+        return None
+    return start_date, end_date
+
+
 def get_production_total(
     *,
     range_type: str = "td",
@@ -117,7 +148,6 @@ def get_production_total(
     date_from: str | None = None,
     date_to: str | None = None,
 ) -> tuple[int, dict]:
-    """Return production units for TD / MTD / YTD / custom bounds."""
     df_full = load_packing_data()
     bounds = get_range_date_bounds(
         _packing_bounds_dataframe(df_full),
@@ -126,18 +156,11 @@ def get_production_total(
         date_from=date_from,
         date_to=date_to,
     )
-
-    date_from_iso = bounds.get("date_from")
-    date_to_iso = bounds.get("date_to")
-    if not date_from_iso or not date_to_iso:
+    production_dates = _production_dates_from_bounds(bounds)
+    if production_dates is None:
         return 0, bounds
-
-    start = pd.Timestamp(date_from_iso).date()
-    end = pd.Timestamp(date_to_iso).date()
-    scoped = df_full[
-        (df_full["ProductionDate"] >= start) & (df_full["ProductionDate"] <= end)
-    ]
-    return sum_production_units(scoped), bounds
+    start, end = production_dates
+    return get_production_between(start, end), bounds
 
 
 def get_production_between(start: date, end: date) -> int:

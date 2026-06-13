@@ -10,7 +10,7 @@ from services.calculation_service import (
     fetch_meter_total,
     sheet_difference_totals,
 )
-from datetime import date as dt_date
+from datetime import date as dt_date, datetime, timedelta
 
 from services.production_service import get_production_between, per_unit
 from services.sql_service import load_sql_data
@@ -49,14 +49,33 @@ def _load_scoped_cards_dataframe(
     return current_df, bounds
 
 
-def get_production_unit_for_bounds(bounds: dict) -> int | None:
+def _production_dates_from_bounds(bounds: dict) -> tuple[dt_date, dt_date] | None:
     date_from = bounds.get("date_from")
     date_to = bounds.get("date_to")
     if not date_from or not date_to:
         return None
+
+    start_ts = datetime.fromisoformat(str(date_from))
+    end_ts = datetime.fromisoformat(str(date_to))
+
+    # Water filters expose 22:30-offset windows. The start timestamp is the
+    # previous calendar day, so add one day to recover the first business date.
+    start_date = start_ts.date() + timedelta(days=1)
+    end_date = end_ts.date()
+    if start_date > end_date:
+        return None
+
+    return start_date, end_date
+
+
+def get_production_unit_for_bounds(bounds: dict) -> int | None:
+    production_dates = _production_dates_from_bounds(bounds)
+    if production_dates is None:
+        return None
+    start_date, end_date = production_dates
     production = get_production_between(
-        dt_date.fromisoformat(str(date_from)),
-        dt_date.fromisoformat(str(date_to)),
+        start_date,
+        end_date,
     )
     return production or None
 
@@ -170,7 +189,7 @@ def factory_discharge(
             "intensity": intensity,
             "intensity_unit": "m³/Unit",
             "production_unit": pu,
-            "meters": sheet_difference_totals(current_df, "wwtp_in", "wwtp_ro_in"),
+            "meters": sheet_difference_totals(current_df, "wwtp_in","well_water", "wwtp_ro_in"),
         }
 
     except Exception as e:
@@ -272,7 +291,7 @@ def all_cards(
                     "intensity": fd_intensity,
                     "intensity_unit": "m³/Unit",
                     "production_unit": pu,
-                    "meters": sheet_difference_totals(current_df, "wwtp_in", "wwtp_ro_in"),
+                    "meters": sheet_difference_totals(current_df, "wwtp_in","well_water", "wwtp_ro_in"),
                 },
                 "recycling_percent": {
                     "card": "Recycling Percent",

@@ -1,5 +1,5 @@
 import calendar
-from datetime import date
+from datetime import date, timedelta
 
 import pandas as pd
 from fastapi import APIRouter, HTTPException
@@ -103,8 +103,9 @@ def _resolve_selected_day_window(
     d = int(day) if day is not None else int(latest_ts.day)
     if d < 1 or d > last_day:
         raise HTTPException(status_code=400, detail=f"day must be between 1 and {last_day}")
-    start_ts = pd.Timestamp(date(y, m, d)) + pd.Timedelta(hours=8)
-    end_ts = start_ts + pd.Timedelta(hours=24) - pd.Timedelta(milliseconds=1)
+    selected_day = date(y, m, d)
+    start_ts = pd.Timestamp(selected_day - timedelta(days=1)) + pd.Timedelta(hours=22, minutes=30)
+    end_ts = pd.Timestamp(selected_day) + pd.Timedelta(hours=22, minutes=30)
     return start_ts, end_ts
 
 
@@ -200,12 +201,12 @@ def recycling_percent_chart(
         series: list[float] = []
 
         if chart_range == "hourly":
-            df = df[(df["DATE"] >= start_ts) & (df["DATE"] <= end_ts)]
+            df = df[(df["DATE"] >= start_ts) & (df["DATE"] < end_ts)]
             df["HOUR_SLOT"] = ((df["DATE"] - start_ts).dt.total_seconds() // 3600).astype(int)
             for slot in range(24):
                 hour_ts = start_ts + pd.Timedelta(hours=slot)
-                hour_data = df[df["HOUR_SLOT"] == slot]
-                labels.append(hour_ts.strftime("%I %p").lstrip("0"))
+                hour_data = df[df["HOUR_SLOT"] <= slot]
+                labels.append(hour_ts.strftime("%I:%M %p").lstrip("0"))
                 series.append(calculate_recycling_percent(hour_data))
             date_from = start_ts.isoformat()
             date_to = end_ts.isoformat()

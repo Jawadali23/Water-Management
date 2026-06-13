@@ -4,10 +4,10 @@ function getLabels(id) {
   const isDpl1Chart = ['bcc', 'rc1', 'wr1'].includes(id);
   if (p === 'daily') {
     return Array.from({ length: 24 }, (_, i) => {
-      const hour = (i + 8) % 24;
+      const hour = (22 + i) % 24;
       const h = hour % 12 || 12;
       const ampm = hour < 12 ? 'AM' : 'PM';
-      return `${h} ${ampm}`;
+      return `${h}:30 ${ampm}`;
     });
   }
   if (p === 'weekly') {
@@ -39,7 +39,7 @@ function getSubLabel(id) {
   const { p, d, w, mo, yr } = getfs(id);
   const yStr = yr ? ' \u00b7 ' + yr : '';
   const mName = mo ? monthNames[parseInt(mo) - 1] : '';
-  if (p === 'daily') return (mName ? mName + (d ? ' ' + d : '') + ' \u00b7 ' : '') + 'Daily \u00b7 8 AM\u20137 AM' + yStr;
+  if (p === 'daily') return (mName ? mName + (d ? ' ' + d : '') + ' \u00b7 ' : '') + 'Daily \u00b7 10:30 PM\u201310:30 PM' + yStr;
   if (p === 'weekly') {
     const wk = parseInt(w) || 1;
     const start = (wk - 1) * 7 + 1;
@@ -186,6 +186,42 @@ function targetCalloutPlugin() {
   };
 }
 
+function recyclePercentLabelsPlugin(labels) {
+  return {
+    id: 'recyclePercentLabels',
+    afterDatasetsDraw(chart) {
+      const ctx = chart.ctx;
+      chart.data.datasets.forEach((ds, di) => {
+        if (ds.type === 'line' || String(ds.label || '').includes('Target')) return;
+        const meta = chart.getDatasetMeta(di);
+        if (meta.hidden) return;
+        meta.data.forEach((bar, idx) => {
+          const val = ds.data[idx];
+          if (val == null || !Number.isFinite(Number(val))) return;
+          const h = Math.abs(bar.base - bar.y);
+          const txt = Number(val).toFixed(1) + '%';
+          ctx.save();
+          ctx.font = `900 ${labels.length > 20 ? 9 : 11}px 'IBM Plex Mono',monospace`;
+          ctx.textAlign = 'center';
+          ctx.fillStyle = h > 26 ? 'rgba(255,255,255,0.94)' : '#0f5132';
+          ctx.shadowColor = h > 26 ? 'rgba(15,23,42,.38)' : 'transparent';
+          ctx.shadowBlur = h > 26 ? 4 : 0;
+          if (h > 26) {
+            ctx.textBaseline = 'middle';
+            ctx.translate(bar.x, bar.y + h / 2);
+            ctx.rotate(-Math.PI / 2);
+            ctx.fillText(txt, 0, 0);
+          } else if (h > 8) {
+            ctx.textBaseline = 'bottom';
+            ctx.fillText(txt, bar.x, bar.y - 3);
+          }
+          ctx.restore();
+        });
+      });
+    }
+  };
+}
+
 function renderBar(canvasId, id, baseData, meterKey, titleId, subId, legId) {
   const isDpl1Bcc = canvasId === 'bccChart';
   const allK = isDpl1Bcc ? ['withdraw', 'discharge'] : ['freshWaterTank', 'withdraw', 'discharge'];
@@ -211,7 +247,7 @@ function renderBar(canvasId, id, baseData, meterKey, titleId, subId, legId) {
       : metricData;
     return { label: allL[i < 0 ? 0 : i], data: rawData, backgroundColor: g, borderColor: c, borderWidth: 1.5, borderRadius: 5, borderSkipped: false };
   });
-  charts[canvasId] = new Chart(canvas, { type: 'bar', data: { labels, datasets: isDpl1Bcc ? datasets.concat(dpl1ConsumptionTargets(keys, labels)) : datasets }, options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, animation: { duration: 380 }, plugins: { legend: { display: false }, tooltip: { ...TT, callbacks: { title: i => '  ' + i[0].label, label: c => `  ${c.dataset.label}: ${Number(c.parsed.y).toFixed(c.dataset.label.includes('Rate') ? 1 : 2)}${c.dataset.label.includes('Rate') ? '%' : ' m\\u00b3/Unit'}` } } }, scales: { x: { grid: { display: false }, ticks: { color: '#8898aa', font: { size: 8.5, weight: '700' }, maxRotation: 50, autoSkip: labels.length > 16 }, border: { display: false } }, y: { grid: { color: grid }, beginAtZero: true, ticks: { color: tick, font: { size: 10.5, weight: '700' }, callback: v => isDpl1Bcc ? v : (v >= 1000 ? (v / 1000).toFixed(1) + 'k' : v) }, border: { display: false } } } }, plugins: [{ id: 'bl', afterDatasetsDraw(chart) { const c3 = chart.ctx; chart.data.datasets.forEach((ds, di) => { if (ds.type === 'line') return; const meta = chart.getDatasetMeta(di); if (meta.hidden) return; meta.data.forEach((bar, idx) => { const val = ds.data[idx]; if (!val) return; const bH = bar.base - bar.y; const txt = ds.label.includes('Rate') ? Number(val).toFixed(1) + '%' : Number(val).toFixed(isDpl1Bcc ? 2 : 0); c3.save(); if (bH > 30) { c3.translate(bar.x, bar.y + bH / 2); c3.rotate(-Math.PI / 2); c3.font = `900 10px 'IBM Plex Mono',monospace`; c3.textAlign = 'center'; c3.textBaseline = 'middle'; c3.fillStyle = 'rgba(255,255,255,0.96)'; c3.fillText(txt, 0, 0); } else if (bH > 10) { c3.font = `900 9px 'IBM Plex Mono',monospace`; c3.textAlign = 'center'; c3.textBaseline = 'bottom'; c3.fillStyle = '#0c2461'; c3.fillText(txt, bar.x, bar.y - 2); } c3.restore(); }); }); } }, targetCalloutPlugin()] });
+  charts[canvasId] = new Chart(canvas, { type: 'bar', data: { labels, datasets: isDpl1Bcc ? datasets.concat(dpl1ConsumptionTargets(keys, labels)) : datasets }, options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, animation: { duration: 380 }, plugins: { legend: { display: false }, tooltip: { ...TT, callbacks: { title: i => '  ' + i[0].label, label: c => `  ${c.dataset.label}: ${Number(c.parsed.y).toFixed(c.dataset.label.includes('Rate') ? 1 : (isDpl1Bcc ? 3 : 2))}${c.dataset.label.includes('Rate') ? '%' : ' m\\u00b3/Unit'}` } } }, scales: { x: { grid: { display: false }, ticks: { color: '#8898aa', font: { size: 8.5, weight: '700' }, maxRotation: 50, autoSkip: labels.length > 16 }, border: { display: false } }, y: { grid: { color: grid }, beginAtZero: true, ticks: { color: tick, font: { size: 10.5, weight: '700' }, callback: v => isDpl1Bcc ? v : (v >= 1000 ? (v / 1000).toFixed(1) + 'k' : v) }, border: { display: false } } } }, plugins: [{ id: 'bl', afterDatasetsDraw(chart) { const c3 = chart.ctx; chart.data.datasets.forEach((ds, di) => { if (ds.type === 'line') return; const meta = chart.getDatasetMeta(di); if (meta.hidden) return; meta.data.forEach((bar, idx) => { const val = ds.data[idx]; if (!val) return; const bH = bar.base - bar.y; const txt = ds.label.includes('Rate') ? Number(val).toFixed(1) + '%' : Number(val).toFixed(isDpl1Bcc ? 3 : 0); c3.save(); if (bH > 30) { c3.translate(bar.x, bar.y + bH / 2); c3.rotate(-Math.PI / 2); c3.font = `900 10px 'IBM Plex Mono',monospace`; c3.textAlign = 'center'; c3.textBaseline = 'middle'; c3.fillStyle = 'rgba(255,255,255,0.96)'; c3.fillText(txt, 0, 0); } else if (bH > 10) { c3.font = `900 9px 'IBM Plex Mono',monospace`; c3.textAlign = 'center'; c3.textBaseline = 'bottom'; c3.fillStyle = '#0c2461'; c3.fillText(txt, bar.x, bar.y - 2); } c3.restore(); }); }); } }, targetCalloutPlugin()] });
 }
 function renderBccChart() {
   if (bccMeter === 'recycleRate') bccMeter = 'all';
@@ -219,12 +255,17 @@ function renderBccChart() {
   if (!useApi) { renderBar('bccChart', 'bcc', monthly, bccMeter, 'bcc-title', 'bcc-sub', 'bcc-leg'); return; }
   const payload = dpl1Api.mainChart;
   const allSeries = payload.series || [];
-  const allowed = ['withdraw', 'discharge'];
+  const perUnitKey = (label) => {
+    const key = normalizeKey(label);
+    if (key.includes('withdrawalperunit') || key.includes('withdrawperunit') || key === 'withdrawalunit') return 'withdraw';
+    if (key.includes('dischargeperunit') || key === 'dischargeunit') return 'discharge';
+    return null;
+  };
   const sourceSeries = allSeries
-    .filter(s => allowed.includes(resolveMetricKey(s.label)))
+    .filter(s => perUnitKey(s.label))
     .map(s => ({
       ...s,
-      label: resolveMetricKey(s.label) === 'withdraw' ? 'Withdrawal / Unit' : 'Discharge / Unit',
+      label: perUnitKey(s.label) === 'withdraw' ? 'Withdrawal / Unit' : 'Discharge / Unit',
       data: s.data.map(v => +Number(v || 0).toFixed(3))
     }));
   const series = bccMeter === 'all' ? sourceSeries : sourceSeries.filter((s) => resolveMetricKey(s.label) === bccMeter || normalizeKey(s.label) === normalizeKey(bccMeter));
@@ -272,7 +313,7 @@ function renderBccChart() {
           ...TT,
           callbacks: {
             title: i => '  ' + i[0].label,
-            label: c => `  ${c.dataset.label}: ${Number(c.parsed.y).toFixed(c.dataset.label.includes('Rate') ? 1 : 2)}${c.dataset.label.includes('Rate') ? '%' : ' m\\u00b3/Unit'}`
+            label: c => `  ${c.dataset.label}: ${Number(c.parsed.y).toFixed(c.dataset.label.includes('Rate') ? 1 : 3)}${c.dataset.label.includes('Rate') ? '%' : ' m\\u00b3/Unit'}`
           }
         }
       },
@@ -320,7 +361,7 @@ function renderBccChart() {
 
             const txt = val >= 1000
               ? (val / 1000).toFixed(1) + 'k'
-              : (ds.label.includes('Rate') ? Number(val).toFixed(1) + '%' : Number(val).toFixed(2));
+              : (ds.label.includes('Rate') ? Number(val).toFixed(1) + '%' : Number(val).toFixed(3));
 
             c3.save();
 
@@ -383,7 +424,7 @@ function renderRcGen(canvasId, id, base, badgeId) {
   const ctx = canvas.getContext('2d');
   const ag = ctx.createLinearGradient(0, 0, 0, 230); ag.addColorStop(0, 'rgba(14,170,96,0.22)'); ag.addColorStop(1, 'rgba(14,170,96,0.0)');
   const { tick } = gc();
-  charts[canvasId] = new Chart(canvas, { type: 'bar', data: { labels, datasets: [{ type: 'bar', label: 'Volume', data, backgroundColor: 'rgba(14,170,96,0.2)', borderColor: 'rgba(14,170,96,0.48)', borderWidth: 1, borderRadius: 5, order: 2 }, { type: 'line', label: 'Recycle %', data, borderColor: '#0eaa60', borderWidth: 2.5, pointRadius: labels.length > 15 ? 0 : 4, pointHoverRadius: 7, pointBackgroundColor: '#fff', pointBorderColor: '#0eaa60', pointBorderWidth: 2, fill: true, backgroundColor: ag, tension: 0.42, order: 1 }, makeTargetLine('Recycle Target', 41, labels, '#22c55e')] }, options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, animation: { duration: 380 }, plugins: { legend: { display: false }, tooltip: { backgroundColor: 'rgba(5,40,25,0.92)', titleColor: '#80e8b0', titleFont: { family: "'IBM Plex Mono',monospace", size: 11 }, bodyColor: '#c0f0d8', bodyFont: { family: "'IBM Plex Mono',monospace", size: 11 }, borderColor: 'rgba(14,170,96,0.28)', borderWidth: 1, padding: 9, cornerRadius: 7, callbacks: { title: i => '  ' + i[0].label, label: c => `  ${c.dataset.label}: ${Number(c.parsed.y).toFixed(1)}%` } } }, scales: { x: { grid: { display: false }, ticks: { color: '#8898aa', font: { size: 7.5 }, maxRotation: 50, autoSkip: labels.length > 16 }, border: { display: false } }, y: { grid: { color: 'rgba(200,215,235,0.4)' }, beginAtZero: true, suggestedMax: 45, ticks: { color: tick, font: { size: 9.5 }, callback: v => v + '%' }, border: { display: false } } } }, plugins: [targetCalloutPlugin()] });
+  charts[canvasId] = new Chart(canvas, { type: 'bar', data: { labels, datasets: [{ type: 'bar', label: 'Recycle %', data, backgroundColor: 'rgba(14,170,96,0.2)', borderColor: 'rgba(14,170,96,0.48)', borderWidth: 1, borderRadius: 5, order: 2 }, { type: 'line', label: 'Recycle %', data, borderColor: '#0eaa60', borderWidth: 2.5, pointRadius: labels.length > 15 ? 0 : 4, pointHoverRadius: 7, pointBackgroundColor: '#fff', pointBorderColor: '#0eaa60', pointBorderWidth: 2, fill: true, backgroundColor: ag, tension: 0.42, order: 1 }, makeTargetLine('Recycle Target', 41, labels, '#22c55e')] }, options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, animation: { duration: 380 }, plugins: { legend: { display: false }, tooltip: { backgroundColor: 'rgba(5,40,25,0.92)', titleColor: '#80e8b0', titleFont: { family: "'IBM Plex Mono',monospace", size: 11 }, bodyColor: '#c0f0d8', bodyFont: { family: "'IBM Plex Mono',monospace", size: 11 }, borderColor: 'rgba(14,170,96,0.28)', borderWidth: 1, padding: 9, cornerRadius: 7, callbacks: { title: i => '  ' + i[0].label, label: c => `  ${c.dataset.label}: ${Number(c.parsed.y).toFixed(1)}%` } } }, scales: { x: { grid: { display: false }, ticks: { color: '#8898aa', font: { size: 7.5 }, maxRotation: 50, autoSkip: labels.length > 16 }, border: { display: false } }, y: { grid: { color: 'rgba(200,215,235,0.4)' }, beginAtZero: true, suggestedMax: 45, ticks: { color: tick, font: { size: 9.5 }, callback: v => v + '%' }, border: { display: false } } } }, plugins: [targetCalloutPlugin(), recyclePercentLabelsPlugin(labels)] });
 }
 function renderRcChart() {
   const useApi = !!dpl1Api.recyclingChart;
@@ -412,7 +453,7 @@ function renderRcChart() {
   const ctx = canvas.getContext('2d');
   const ag = ctx.createLinearGradient(0, 0, 0, 230); ag.addColorStop(0, 'rgba(14,170,96,0.22)'); ag.addColorStop(1, 'rgba(14,170,96,0.0)');
   const { tick } = gc();
-  charts['rcChart'] = new Chart(canvas, { type: 'bar', data: { labels, datasets: [{ type: 'bar', label: prettyMetricLabel(chosen.label), data: chosen.data, backgroundColor: 'rgba(14,170,96,0.2)', borderColor: 'rgba(14,170,96,0.48)', borderWidth: 1, borderRadius: 5, order: 2 }, { type: 'line', label: prettyMetricLabel(chosen.label), data: chosen.data, borderColor: '#0eaa60', borderWidth: 2.5, pointRadius: labels.length > 15 ? 0 : 4, pointHoverRadius: 7, pointBackgroundColor: '#fff', pointBorderColor: '#0eaa60', pointBorderWidth: 2, fill: true, backgroundColor: ag, tension: 0.42, order: 1 }, makeTargetLine('Recycle Target', 41, labels, '#22c55e')] }, options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, animation: { duration: 380 }, plugins: { legend: { display: false }, tooltip: { backgroundColor: 'rgba(5,40,25,0.92)', titleColor: '#80e8b0', titleFont: { family: "'IBM Plex Mono',monospace", size: 11 }, bodyColor: '#c0f0d8', bodyFont: { family: "'IBM Plex Mono',monospace", size: 11 }, borderColor: 'rgba(14,170,96,0.28)', borderWidth: 1, padding: 9, cornerRadius: 7, callbacks: { title: i => '  ' + i[0].label, label: c => `  ${c.dataset.label}: ${Number(c.parsed.y).toFixed(1)}%` } } }, scales: { x: { grid: { display: false }, ticks: { color: '#8898aa', font: { size: 7.5 }, maxRotation: 50, autoSkip: labels.length > 16 }, border: { display: false } }, y: { grid: { color: 'rgba(200,215,235,0.4)' }, beginAtZero: true, suggestedMax: 45, ticks: { color: tick, font: { size: 9.5 }, callback: v => v + '%' }, border: { display: false } } } }, plugins: [targetCalloutPlugin()] });
+  charts['rcChart'] = new Chart(canvas, { type: 'bar', data: { labels, datasets: [{ type: 'bar', label: prettyMetricLabel(chosen.label), data: chosen.data, backgroundColor: 'rgba(14,170,96,0.2)', borderColor: 'rgba(14,170,96,0.48)', borderWidth: 1, borderRadius: 5, order: 2 }, { type: 'line', label: prettyMetricLabel(chosen.label), data: chosen.data, borderColor: '#0eaa60', borderWidth: 2.5, pointRadius: labels.length > 15 ? 0 : 4, pointHoverRadius: 7, pointBackgroundColor: '#fff', pointBorderColor: '#0eaa60', pointBorderWidth: 2, fill: true, backgroundColor: ag, tension: 0.42, order: 1 }, makeTargetLine('Recycle Target', 41, labels, '#22c55e')] }, options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, animation: { duration: 380 }, plugins: { legend: { display: false }, tooltip: { backgroundColor: 'rgba(5,40,25,0.92)', titleColor: '#80e8b0', titleFont: { family: "'IBM Plex Mono',monospace", size: 11 }, bodyColor: '#c0f0d8', bodyFont: { family: "'IBM Plex Mono',monospace", size: 11 }, borderColor: 'rgba(14,170,96,0.28)', borderWidth: 1, padding: 9, cornerRadius: 7, callbacks: { title: i => '  ' + i[0].label, label: c => `  ${c.dataset.label}: ${Number(c.parsed.y).toFixed(1)}%` } } }, scales: { x: { grid: { display: false }, ticks: { color: '#8898aa', font: { size: 7.5 }, maxRotation: 50, autoSkip: labels.length > 16 }, border: { display: false } }, y: { grid: { color: 'rgba(200,215,235,0.4)' }, beginAtZero: true, suggestedMax: 45, ticks: { color: tick, font: { size: 9.5 }, callback: v => v + '%' }, border: { display: false } } } }, plugins: [targetCalloutPlugin(), recyclePercentLabelsPlugin(labels)] });
 }
 function renderRcChart2() { renderRcGen('dpl2RcChart', 'rc2', monthly2, 'rc2-badge'); }
 function renderRcChartU() { renderRcGen('urilRcChart', 'rcU', monthlyU, 'rcU-badge'); }
@@ -420,9 +461,9 @@ function renderRcChartU() { renderRcGen('urilRcChart', 'rcU', monthlyU, 'rcU-bad
 // ═══ FACTORY COMPARISON CHART ═══
 function renderWaterRecycleChart() {
   const labels = getLabels('wr1');
-  const targetValue = 41;
-  const processValue = 19.0;
-  const domesticValue = 23.4;
+  const targetValue = 0;
+  const processValue = 0;
+  const domesticValue = 0;
   const process = labels.map(() => processValue);
   const domestic = labels.map(() => domesticValue);
   const badge = document.getElementById('wr1-badge');

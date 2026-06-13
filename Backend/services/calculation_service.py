@@ -12,9 +12,7 @@ METERS = {
 # Meters whose summed FLOW_RATE values feed water withdrawal totals
 WITHDRAWAL_SOURCE_KEYS = (
     "well_water",
-    "fresh_water_tank",
-    "domestic_fresh_water",
-    "drinking_water_ro_plant",
+    "fresh_water_tank"
 )
 
 
@@ -33,9 +31,7 @@ def calculate_withdrawal(df):
     return round(
         fetch_meter_total(df, METERS["well_water"])
         + fetch_meter_total(df, METERS["fresh_water_tank"])
-        + fetch_meter_total(df, METERS["domestic_fresh_water"])
-        + fetch_meter_total(df, METERS["drinking_water_ro_plant"]),
-        2,
+        ,2,
     )
 
 
@@ -43,6 +39,7 @@ def calculate_withdrawal(df):
 def calculate_discharge(df):
     return round(
         fetch_meter_total(df, METERS["wwtp_in"])
+        + fetch_meter_total(df, METERS["well_water"])
         - fetch_meter_total(df, METERS["wwtp_ro_in"]),
         2,
     )
@@ -50,21 +47,19 @@ def calculate_discharge(df):
 
 
 def calculate_recycle_volume(df):
-    wastewater_in = calculate_withdrawal(df)
-
-    if wastewater_in <= 0:
-        return 0
-
+    
     recycled_volume = fetch_meter_total(df, METERS["overhead_admin_tank"])
 
-    return round(recycled_volume / wastewater_in, 2)
+    return round(recycled_volume , 2)
 
 
 def calculate_recycling_percent(df):
-    recycle_ratio = calculate_recycle_volume(df)
+    wastewater_in = calculate_withdrawal(df)
+    ro_produced = calculate_recycle_volume(df)
 
-    if recycle_ratio <= 0:
+    if wastewater_in <= 0:
         return 0
+    
 
-    return round(recycle_ratio * 100, 2)
+    return round(ro_produced / wastewater_in * 100, 2)
 
